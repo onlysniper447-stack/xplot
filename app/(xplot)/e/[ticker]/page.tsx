@@ -67,22 +67,19 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </p>
       </header>
 
-      <div className="flex flex-wrap gap-2">
-        <Freshness seconds={env.ages.collector_s} />
-      </div>
-
-      <section className="grid gap-3 md:grid-cols-4" aria-label="Prices">
-        <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
-        <div className="xplot-card rounded-xl p-3">
-          <p className="text-xs" style={{ color: "var(--muted)" }}>Oracle</p>
-          <OracleCell row={equity} />
+      <section className="xplot-card rounded-xl p-4" aria-label="Prices">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
+          <div title="Chainlink price per token, with the age of that print">
+            <p className="text-xs" style={{ color: "var(--muted)" }}>Oracle price</p>
+            <div className="mt-1">
+              <OracleCell row={equity} />
+            </div>
+          </div>
+          <Price label="Spread" value={formatPct(equity.spreadPct)} hint="Per token versus per token" />
+          <Price label="Executable spread" value={formatPct(equity.executableSpread1kPct)} hint="Spread after a $1k quote impact" />
         </div>
-        <Price label="Spread" value={formatPct(equity.spreadPct)} hint="Per token versus per token" />
-        <Price label="Executable spread, $1k" value={formatPct(equity.executableSpread1kPct)} hint="Spread after a $1k quote impact" />
       </section>
-      <p className="text-sm" style={{ color: "var(--muted)" }}>
-        Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
-      </p>
 
       <section aria-labelledby="chart-heading" className="xplot-card rounded-xl p-4">
         <h2 id="chart-heading" className="text-sm font-medium">DEX and oracle</h2>
@@ -90,6 +87,13 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
           <PriceChart points={series} />
         </div>
       </section>
+
+      <div className="flex flex-wrap gap-2">
+        <Freshness seconds={env.ages.collector_s} />
+      </div>
+      <p className="text-sm" style={{ color: "var(--muted)" }}>
+        Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
+      </p>
 
       {equity.tier !== "FULL" ? (
         <section className="xplot-card rounded-xl p-4">
@@ -186,7 +190,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
 
 function Price({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
-    <div className="xplot-card rounded-xl p-3" title={hint}>
+    <div title={hint}>
       <p className="text-xs" style={{ color: "var(--muted)" }}>{label}</p>
       <p className="mono xplot-figure mt-1 text-lg">{value}</p>
     </div>
