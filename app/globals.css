@@ -132,7 +132,15 @@
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-xplot-sans), Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
   min-height: 100dvh;
+}
+
+.xplot-table :is(th, td) {
+  padding: 16px 8px;
+  font-size: 15px;
+  line-height: 1.4;
 }
 
 .xplot-app a {
@@ -170,6 +178,11 @@
   color: #111111;
   border-bottom: 2px solid #ff8000;
   padding-bottom: 2px;
+  text-decoration: none;
+}
+
+.xplot-app a.xplot-tab,
+.xplot-app a.xplot-tab:hover {
   text-decoration: none;
 }
 

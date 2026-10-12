@@ -26,7 +26,7 @@ export default async function CoveragePage() {
         <p className="text-sm">No snapshot yet. Run the collector, then reload.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="xplot-table w-full text-left">
             <caption className="sr-only">Coverage by token</caption>
             <thead>
               <tr style={{ color: "var(--muted)" }}>

@@ -19,7 +19,7 @@ export default function ApiPage() {
       <p className="max-w-2xl text-sm" style={{ color: "var(--muted)" }}>
         Read-only JSON. Every response includes as_of, ages, and the disclaimer. The handlers read the local database. They do not call a chain or a venue.
       </p>
-      <table className="w-full text-left text-sm">
+      <table className="xplot-table w-full text-left">
         <thead>
           <tr style={{ color: "var(--muted)" }}>
             <th scope="col" className="py-2">Endpoint</th>

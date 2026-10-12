@@ -101,7 +101,7 @@ function EquityTable({ rows, query }: { rows: Awaited<ReturnType<typeof coverage
   return (
     <div>
       <div className="hidden md:block">
-        <table className="w-full text-left text-sm">
+        <table className="xplot-table w-full text-left">
           <caption className="sr-only">Listed Robinhood Stock Tokens</caption>
           <thead>
             <tr style={{ color: "var(--muted)" }}>
