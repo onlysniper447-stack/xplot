@@ -4,8 +4,11 @@ import {
   aggregateSpot,
   alertThresholdPct,
   classifyTier,
+  collectorIsStalled,
+  collectorStallCopy,
   constantProductImpactBps,
   decodeOraclePrice,
+  oracleAgeSeconds,
   executableSpreadPct,
   liquidityConfidence,
   oracleState,
@@ -95,9 +98,28 @@ describe("tiers", () => {
     assert.equal(classifyTier({ ...base, oracle: "stale" }).tier, "DEGRADED");
     assert.equal(classifyTier({ ...base, eligibleSpot: 0 }).reasons.includes("NO_POOL"), true);
     assert.equal(classifyTier({ ...base, eligibleSpot: 0, poolCount: 2 }).reasons.includes("NO_POOL"), false);
+    const listed = classifyTier({ ...base, hasFeed: false, feedReadable: false, oracle: "unread", eligibleSpot: 0 });
+    assert.equal(listed.tier, "LISTED_ONLY");
+    assert.equal(listed.reasons.includes("NO_FEED"), true);
   });
-  it("does not call a failed adapter oracle-only", () => {
-    assert.equal(classifyTier({ ...base, eligibleSpot: 0, adapterDown: true }).tier, "DEGRADED");
+  it("keeps the last good tier when the adapter is down", () => {
+    const down = classifyTier({ ...base, eligibleSpot: 0, adapterDown: true });
+    assert.equal(down.tier, "ORACLE_ONLY");
+    assert.equal(down.reasons.includes("ADAPTER_DOWN:uniswap"), false);
+    assert.equal(down.reasons.includes("NO_POOL"), false);
+    assert.equal(classifyTier({ ...base, adapterDown: true }).tier, "FULL");
+    const noFeed = classifyTier({ ...base, hasFeed: false, feedReadable: false, oracle: "unread", eligibleSpot: 0, adapterDown: true });
+    assert.equal(noFeed.tier, "LISTED_ONLY");
+  });
+  it("ages an oracle from its updatedAt and flags a stalled collector after 3 minutes", () => {
+    const now = new Date("2026-10-12T15:00:00Z");
+    assert.equal(oracleAgeSeconds("2026-10-12T14:00:00Z", now), 3600);
+    assert.equal(collectorIsStalled(180), false);
+    assert.equal(collectorIsStalled(181), true);
+    assert.equal(
+      collectorStallCopy("2026-10-12T14:57:00Z"),
+      "Collector stalled. Showing last known values from 2026-10-12 14:57 UTC.",
+    );
   });
   it("treats a frozen close as fresh", () => {
     assert.equal(classifyTier({ ...base, oracle: "frozen_at_close" }).tier, "FULL");

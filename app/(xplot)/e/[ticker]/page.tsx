@@ -52,6 +52,9 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
             <span className="ml-2" style={{ color: "var(--muted)" }}>{equity.ticker}</span>
           </p>
           <p className="mt-3 max-w-2xl text-sm">{line}</p>
+          {equity.notes.map((note) => (
+            <p key={note} className="mt-2 max-w-2xl text-sm" role="note" style={{ color: "var(--warn)" }}>{note}</p>
+          ))}
         </div>
         <div className="flex flex-wrap gap-2">
           <Chip tone={tierTone(equity.tier)} title={equity.reasons.join(", ") || "No coverage flags"}>{equity.tier}</Chip>

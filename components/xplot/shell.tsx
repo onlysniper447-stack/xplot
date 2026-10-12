@@ -10,10 +10,14 @@ export function Shell({
   children,
   market,
   coverage,
+  adapterBanner,
+  stallBanner,
 }: {
   children: React.ReactNode;
   market: Market;
   coverage: string;
+  adapterBanner?: string | null;
+  stallBanner?: string | null;
 }) {
   const [query, setQuery] = useState("");
 
@@ -64,6 +68,18 @@ export function Shell({
             {coverage}
           </Link>
         </div>
+        {adapterBanner ? (
+          <p className="mx-auto max-w-6xl px-4 pb-2 text-sm" role="status" style={{ color: "var(--warn)" }}>
+            <span aria-hidden="true">▲ </span>
+            {adapterBanner}
+          </p>
+        ) : null}
+        {stallBanner ? (
+          <p className="mx-auto max-w-6xl px-4 pb-2 text-sm" role="status" style={{ color: "var(--warn)" }}>
+            <span aria-hidden="true">▲ </span>
+            {stallBanner}
+          </p>
+        ) : null}
         <nav className="mx-auto flex max-w-6xl gap-4 px-4 pb-3 text-sm" aria-label="Product">
           <Link href="/markets" className="xplot-nav">Markets</Link>
           <Link href="/coverage" className="xplot-nav">Coverage</Link>

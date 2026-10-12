@@ -257,8 +257,20 @@ let rpcFailures = 0;
 let rpcSample: string | null = null;
 
 function shortError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error ?? "failed");
-  return message.split("\n")[0].slice(0, 220);
+  return describeError(error).slice(0, 500);
+}
+
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error ?? "failed");
+  const parts = [`${error.name}: ${error.message}`];
+  const status = (error as Error & { status?: number }).status;
+  if (status) parts.push(`status ${status}`);
+  let cause: unknown = error.cause;
+  for (let depth = 0; cause && depth < 4; depth++) {
+    parts.push(cause instanceof Error ? `cause: ${cause.message}` : `cause: ${String(cause)}`);
+    cause = cause instanceof Error ? cause.cause : undefined;
+  }
+  return parts.join(" | ").replace(/\s+/g, " ");
 }
 
 function isRevert(error: unknown): boolean {
@@ -489,6 +501,23 @@ export async function runTick(): Promise<TickResult> {
     errors.push(`oracle: ${shortError(error)}`);
   }
 
+  try {
+    const missing = instruments.filter((row) => row.chainlink_feed && oracleById.get(row.id) == null);
+    if (missing.length) {
+      const prior = await lastOracleByInstrument();
+      let filled = 0;
+      for (const row of missing) {
+        const prev = prior.get(row.id);
+        if (!prev) continue;
+        oracleById.set(row.id, { ...prev, decimals: row.feed_decimals ?? 8 });
+        filled += 1;
+      }
+      if (filled) console.log(`oracle last-good ${filled}`);
+    }
+  } catch (error) {
+    errors.push(`oracle last-good: ${shortError(error)}`);
+  }
+
   const peg = await readPegs(c, feeds);
 
   let uniswapDown = false;
@@ -507,7 +536,16 @@ export async function runTick(): Promise<TickResult> {
   }
   if (uniswapError) {
     uniswapDown = true;
-    errors.push(`uniswap: ${shortError(uniswapError)}`);
+    const detail = describeError(uniswapError);
+    console.error(`uniswap adapter down: ${detail}`);
+    errors.push(`uniswap: ${detail}`);
+    try {
+      pools = await lastPricedPools();
+      console.log(`uniswap last-good pools ${pools.length}`);
+    } catch (error) {
+      pools = [];
+      errors.push(`uniswap last-good: ${shortError(error)}`);
+    }
   }
 
   const quotes = new Map<string, z.infer<typeof QuoteSchema> | null>();
@@ -722,7 +760,65 @@ type PoolSnap = {
   impact: Record<number, number | null>;
   token0: string;
   token1: string;
+  /** When set, eligibility uses this print time. A live read leaves it unset. */
+  asOf?: string | null;
 };
+
+async function lastOracleByInstrument() {
+  const rows = await q<{ instrument_id: number; price: string; oracle_updated_at: string }>(
+    `SELECT DISTINCT ON (instrument_id) instrument_id, price::text, oracle_updated_at::text
+     FROM oracle_snapshots
+     ORDER BY instrument_id, ts DESC`,
+  );
+  const map = new Map<number, { price: number; updatedAt: Date }>();
+  for (const row of rows) {
+    const price = num(row.price);
+    const updatedAt = new Date(row.oracle_updated_at);
+    if (price == null || Number.isNaN(updatedAt.getTime())) continue;
+    map.set(row.instrument_id, { price, updatedAt });
+  }
+  return map;
+}
+
+async function lastPricedPools(): Promise<PoolSnap[]> {
+  const rows = await q<{
+    instrument_id: number;
+    pool_address: string | null;
+    quote_symbol: string | null;
+    quote_address: string | null;
+    fee_bps: number | null;
+    price_usd_per_token: string | null;
+    tvl_usd: string | null;
+    depth_1pct_usd: string | null;
+    ts: string;
+  }>(
+    `SELECT m.instrument_id, m.pool_address, m.quote_symbol, m.quote_address, m.fee_bps,
+            s.price_usd_per_token::text, s.tvl_usd::text, s.depth_1pct_usd::text, s.ts::text
+     FROM markets m
+     JOIN venues v ON v.id = m.venue_id AND v.lane = 'spot'
+     JOIN LATERAL (
+       SELECT price_usd_per_token, tvl_usd, depth_1pct_usd, ts
+       FROM market_snapshots s
+       WHERE s.market_id = m.id AND s.price_usd_per_token IS NOT NULL
+       ORDER BY ts DESC
+       LIMIT 1
+     ) s ON true`,
+  );
+  return rows.map((row) => ({
+    instrumentId: row.instrument_id,
+    pool: row.pool_address ?? "",
+    quoteSymbol: row.quote_symbol ?? "",
+    quoteAddress: row.quote_address ?? "",
+    fee: row.fee_bps ?? 0,
+    priceUsd: num(row.price_usd_per_token),
+    tvlUsd: num(row.tvl_usd),
+    depthUsd: num(row.depth_1pct_usd),
+    impact: { 1000: null, 10000: null, 50000: null },
+    token0: "",
+    token1: "",
+    asOf: row.ts,
+  }));
+}
 
 type QuoteToken = { symbol: string; address: Address; decimals: number; usd: number | null };
 
@@ -1082,7 +1178,7 @@ async function writeInstrument(input: {
       priceUsdPerToken: pool.priceUsd,
       tvlUsd: pool.tvlUsd,
       depth1pctUsd: pool.depthUsd,
-      updatedWithinWindow: true,
+      updatedWithinWindow: pool.asOf == null || now.getTime() - new Date(pool.asOf).getTime() <= 5 * 60 * 1000,
     })),
   );
   const classified = classifyTier({

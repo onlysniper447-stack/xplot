@@ -1,7 +1,18 @@
 import { asTextArray, getDb, num, q } from "../db/client";
 import { DISCLAIMER } from "./disclaimer";
-import { statusWord, type OracleState, type SessionName, type Tier } from "./engines";
-import { nyseStrip } from "./session";
+import {
+  ADAPTER_DOWN_NOTE,
+  classifyTier,
+  collectorIsStalled,
+  collectorStallCopy,
+  oracleAgeSeconds,
+  oracleState,
+  statusWord,
+  type OracleState,
+  type SessionName,
+  type Tier,
+} from "./engines";
+import { nyseStrip, resolveSession } from "./session";
 
 export type EquitySummary = {
   id: string;
@@ -32,6 +43,7 @@ export type EquitySummary = {
   feedStatus: string;
   poolCount: number;
   tvlUsd: number | null;
+  notes: string[];
 };
 
 type SummaryRow = {
@@ -63,6 +75,11 @@ type SummaryRow = {
   pool_count: number | null;
   instrument_id: number;
   tvl_usd: unknown;
+  status: string | null;
+  chainlink_feed: string | null;
+  feed_heartbeat_s: number | null;
+  all_day_tradability: string | null;
+  oracle_paused: boolean | null;
 };
 
 const SUMMARY_SQL = `
@@ -74,7 +91,8 @@ SELECT e.id, e.ticker, e.name, e.asset_class, i.address, i.id AS instrument_id,
        d.underlying_price, d.venue_dispersion_pct, d.ts AS deviation_ts,
        o.oracle_updated_at,
        r.is_trading_halt,
-       tvl.tvl_usd
+       tvl.tvl_usd,
+       i.status, i.chainlink_feed, i.feed_heartbeat_s, i.all_day_tradability, i.oracle_paused
 FROM instruments i
 JOIN equities e ON e.id = i.equity_id
 LEFT JOIN LATERAL (
@@ -102,11 +120,48 @@ LEFT JOIN LATERAL (
 WHERE i.delisted_at IS NULL
 `;
 
-function mapSummary(row: SummaryRow): EquitySummary {
-  const tier = row.tier ?? "LISTED_ONLY";
+function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
+  const now = new Date();
   const session = row.session ?? "closed";
-  const oracleState = row.oracle_state ?? "unread";
   const halt = Boolean(row.is_trading_halt);
+  const oraclePrice = num(row.oracle_price);
+  const oracleAgeS = oracleAgeSeconds(row.oracle_updated_at, now);
+  const overnight = row.all_day_tradability === "TRADING_STATUS_TRADABLE";
+  const sessionNow = resolveSession(now, overnight);
+  const readable = oraclePrice != null && row.oracle_updated_at != null;
+  const freshOracle = oracleState({
+    ageS: oracleAgeS,
+    heartbeatS: row.feed_heartbeat_s,
+    session: sessionNow.session,
+    overnightTradable: overnight,
+    corporateAction: Boolean(row.oracle_paused),
+    readable,
+  });
+  const storedReasons = asTextArray(row.reasons);
+  const hadAdapterReason = storedReasons.some((reason) => reason.startsWith("ADAPTER_DOWN:"));
+  const classified = classifyTier({
+    inactive: row.status === "ASSET_STATUS_INACTIVE",
+    verified: !storedReasons.includes("SYMBOL_MISMATCH"),
+    hasFeed: Boolean(row.chainlink_feed),
+    feedReadable: readable && freshOracle !== "unread",
+    oracle: freshOracle,
+    eligibleSpot: row.pool_count ?? 0,
+    adapterDown: adapterDown || hadAdapterReason,
+    decimalsMismatch: storedReasons.includes("DECIMALS_MISMATCH"),
+    multiplierMissing: storedReasons.includes("MULTIPLIER_MISSING"),
+    halt,
+    poolsExistBelowMin: storedReasons.includes("POOL_TVL_BELOW_MIN"),
+    poolCount: row.pool_count ?? 0,
+  });
+  let tier = classified.tier;
+  const reasons = [...classified.reasons];
+  for (const code of ["SYMBOL_MISMATCH", "MULTIPLIER_MISMATCH"]) {
+    if (storedReasons.includes(code) && !reasons.includes(code)) reasons.push(code);
+  }
+  if ((reasons.includes("SYMBOL_MISMATCH") || reasons.includes("MULTIPLIER_MISMATCH")) && tier !== "LISTED_ONLY") {
+    tier = "DEGRADED";
+  }
+  const notes = adapterDown || hadAdapterReason ? [ADAPTER_DOWN_NOTE] : [];
   return {
     id: row.id,
     ticker: row.ticker,
@@ -114,16 +169,16 @@ function mapSummary(row: SummaryRow): EquitySummary {
     assetClass: row.asset_class,
     address: row.address,
     tier,
-    reasons: asTextArray(row.reasons),
+    reasons,
     dexPrice: num(row.dex_price),
-    oraclePrice: num(row.oracle_price),
-    oracleAgeS: row.oracle_age_s,
-    oracleState,
+    oraclePrice,
+    oracleAgeS,
+    oracleState: freshOracle,
     oracleUpdatedAt: row.oracle_updated_at,
     spreadPct: num(row.spread_pct),
     executableSpread1kPct: num(row.executable_spread_1k_pct),
     liquidityConfidence: row.liquidity_confidence,
-    status: statusWord({ tier, halt, alert: row.alert, session, oracle: oracleState }),
+    status: statusWord({ tier, halt, alert: row.alert, session, oracle: freshOracle }),
     alert: row.alert,
     session,
     sessionSource: row.session_source ?? "calendar",
@@ -133,9 +188,10 @@ function mapSummary(row: SummaryRow): EquitySummary {
     halt,
     dispersionPct: num(row.venue_dispersion_pct),
     asOf: row.deviation_ts,
-    feedStatus: row.feed_status ?? "missing",
+    feedStatus: classified.feedStatus,
     poolCount: row.pool_count ?? 0,
     tvlUsd: num(row.tvl_usd),
+    notes,
   };
 }
 
@@ -146,8 +202,9 @@ export async function listEquities(filters: {
   q?: string;
 }): Promise<EquitySummary[]> {
   await getDb();
+  const tick = await readTickMeta();
   const rows = await q<SummaryRow>(`${SUMMARY_SQL} ORDER BY tvl.tvl_usd DESC NULLS LAST, e.ticker`);
-  return rows.map(mapSummary).filter((row) => {
+  return rows.map((row) => mapSummary(row, tick.uniswapDown)).filter((row) => {
     if (filters.tier && row.tier !== filters.tier) return false;
     if (filters.assetClass && row.assetClass !== filters.assetClass) return false;
     if (filters.hasAlert && !row.alert) return false;
@@ -166,19 +223,44 @@ export async function getEquity(idOrTicker: string): Promise<EquitySummary | nul
   return rows.find((row) => row.id.toUpperCase() === key || row.ticker === key || row.address.toLowerCase() === key.toLowerCase()) ?? null;
 }
 
-export async function envelope(extra: Record<string, unknown> = {}) {
+type TickMeta = {
+  at: string | null;
+  ageS: number | null;
+  uniswapDown: boolean;
+  tickMs: number | null;
+  errors: string[];
+  counts: Record<string, number>;
+  stalled: boolean;
+};
+
+async function readTickMeta(): Promise<TickMeta> {
   const tick = await q<{ value: { at?: string; counts?: Record<string, number>; errors?: string[]; tickMs?: number; uniswapDown?: boolean }; updated_at: string }>(
     `SELECT value, updated_at::text FROM meta WHERE key = 'last_tick'`,
   );
   const at = tick[0]?.value?.at ?? null;
-  const age = at ? Math.round((Date.now() - new Date(at).getTime()) / 1000) : null;
+  const ageS = oracleAgeSeconds(at);
+  return {
+    at,
+    ageS,
+    uniswapDown: Boolean(tick[0]?.value?.uniswapDown),
+    tickMs: tick[0]?.value?.tickMs ?? null,
+    errors: tick[0]?.value?.errors ?? [],
+    counts: tick[0]?.value?.counts ?? {},
+    stalled: collectorIsStalled(ageS),
+  };
+}
+
+export async function envelope(extra: Record<string, unknown> = {}) {
+  const tick = await readTickMeta();
   return {
     as_of: new Date().toISOString(),
-    ages: { collector_s: age },
+    ages: { collector_s: tick.ageS },
     disclaimer: DISCLAIMER,
     market: nyseStrip(new Date()),
-    collector: tick[0]
-      ? { at, tickMs: tick[0].value.tickMs ?? null, errors: tick[0].value.errors ?? [], counts: tick[0].value.counts ?? {}, uniswapDown: Boolean(tick[0].value.uniswapDown) }
+    stalled: tick.stalled,
+    stallMessage: tick.stalled ? collectorStallCopy(tick.at) : null,
+    collector: tick.at
+      ? { at: tick.at, tickMs: tick.tickMs, errors: tick.errors, counts: tick.counts, uniswapDown: tick.uniswapDown }
       : null,
     ...extra,
   };

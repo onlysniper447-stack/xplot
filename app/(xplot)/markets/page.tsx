@@ -122,7 +122,12 @@ function EquityTable({ rows, query }: { rows: Awaited<ReturnType<typeof coverage
                 <td className="px-2 py-3"><SpreadCell value={row.spreadPct} /></td>
                 <td className="px-2 py-3">{row.liquidityConfidence ?? "—"}<span className="block text-xs" style={{ color: "var(--muted)" }}>{formatCompactUsd(row.tvlUsd)}</span></td>
                 <td className="px-2 py-3"><Chip tone={statusTone(row.status)}>{row.status}</Chip></td>
-                <td className="px-2 py-3"><Chip tone={tierTone(row.tier)} title={row.reasons.join(", ")}>{row.tier}</Chip></td>
+                <td className="px-2 py-3">
+                  <Chip tone={tierTone(row.tier)} title={row.reasons.join(", ")}>{row.tier}</Chip>
+                  {row.notes.map((note) => (
+                    <span key={note} className="mt-1 block text-xs" style={{ color: "var(--muted)" }}>{note}</span>
+                  ))}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -138,6 +143,9 @@ function EquityTable({ rows, query }: { rows: Awaited<ReturnType<typeof coverage
             <div className="mt-2 flex flex-wrap gap-2">
               <Chip tone={statusTone(row.status)}>{row.status}</Chip>
               <Chip tone={tierTone(row.tier)}>{row.tier}</Chip>
+              {row.notes.map((note) => (
+                <span key={note} className="text-xs" style={{ color: "var(--muted)" }}>{note}</span>
+              ))}
             </div>
           </li>
         ))}

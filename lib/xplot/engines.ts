@@ -156,6 +156,7 @@ export type TierInput = {
   feedReadable: boolean;
   oracle: OracleState;
   eligibleSpot: number;
+  /** The pool scan did not finish. Suppresses NO_POOL. Never changes the tier. */
   adapterDown: boolean;
   decimalsMismatch: boolean;
   multiplierMissing: boolean;
@@ -164,6 +165,30 @@ export type TierInput = {
   /** Pools discovered, including ones that could not be priced. Defaults to the eligible count. */
   poolCount?: number;
 };
+
+export const ADAPTER_DOWN_NOTE = "Uniswap adapter down. DEX prices unavailable.";
+export const COLLECTOR_STALL_AFTER_S = 180;
+
+/** Age of an oracle print at read time. `updatedAt` is the feed timestamp, not the collector clock. */
+export function oracleAgeSeconds(updatedAt: Date | string | null, now: Date = new Date()): number | null {
+  if (updatedAt == null) return null;
+  const ms = updatedAt instanceof Date ? updatedAt.getTime() : Date.parse(updatedAt);
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.round((now.getTime() - ms) / 1000));
+}
+
+export function collectorIsStalled(ageS: number | null): boolean {
+  return ageS != null && ageS > COLLECTOR_STALL_AFTER_S;
+}
+
+export function collectorStallCopy(at: string | null): string {
+  let time = "an unknown time";
+  if (at) {
+    const ms = Date.parse(at);
+    time = Number.isFinite(ms) ? `${new Date(ms).toISOString().replace("T", " ").slice(0, 16)} UTC` : at;
+  }
+  return `Collector stalled. Showing last known values from ${time}.`;
+}
 
 export function classifyTier(input: TierInput): { tier: Tier; reasons: string[]; feedStatus: string } {
   const reasons: string[] = [];
@@ -174,7 +199,6 @@ export function classifyTier(input: TierInput): { tier: Tier; reasons: string[];
   if (input.multiplierMissing) reasons.push("MULTIPLIER_MISSING");
   if (input.decimalsMismatch) reasons.push("DECIMALS_MISMATCH");
   if (input.halt) reasons.push("TRADING_HALT");
-  if (input.adapterDown) reasons.push("ADAPTER_DOWN:uniswap");
   const poolsFound = input.poolCount ?? input.eligibleSpot;
   if (!input.adapterDown && input.hasFeed && input.eligibleSpot === 0 && !input.poolsExistBelowMin && poolsFound === 0) {
     reasons.push("NO_POOL");
@@ -186,10 +210,11 @@ export function classifyTier(input: TierInput): { tier: Tier; reasons: string[];
   const fresh =
     input.feedReadable &&
     (input.oracle === "live" || input.oracle === "frozen_at_close" || input.oracle === "frozen_corporate_action");
+  const ownFeedBroken = (input.hasFeed && !input.feedReadable) || input.oracle === "stale";
   let tier: Tier;
   if (input.inactive) tier = "LISTED_ONLY";
   else if (!input.verified) tier = "DEGRADED";
-  else if (input.adapterDown || (input.hasFeed && !input.feedReadable) || input.oracle === "stale") tier = "DEGRADED";
+  else if (ownFeedBroken) tier = "DEGRADED";
   else if (fresh && input.eligibleSpot >= 1) tier = "FULL";
   else if (fresh && input.eligibleSpot === 0) tier = "ORACLE_ONLY";
   else if (!input.hasFeed && input.eligibleSpot >= 1) tier = "DEX_ONLY";
