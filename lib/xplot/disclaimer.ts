@@ -1,0 +1,2 @@
+export const DISCLAIMER =
+  "XPLOT is informational only and is not investment, legal, or tax advice. Robinhood Stock Tokens are issuer debt securities that provide economic exposure to the underlying security and do not confer ownership or shareholder rights. Perpetual futures are leveraged derivatives. Oracle values outside US market hours reflect the last close. Data may be delayed or incomplete.";

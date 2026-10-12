@@ -1,0 +1,314 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: #f4f1e9;
+  --color-surface-1: #202320;
+  --color-surface-2: #2a2e2b;
+  --color-surface-3: #202320;
+  --color-line: rgb(32 35 32 / 0.16);
+  --color-line-strong: #ff8000;
+  --color-ink: #111111;
+  --color-ink-secondary: #5c564e;
+  --color-ink-muted: #6b655d;
+  --color-accent: #ff8000;
+  --color-accent-fg: #111111;
+  --color-accent-dim: rgb(255 128 0 / 0.16);
+  --color-gain: #0f6b45;
+  --color-loss: #b42318;
+  --color-warn: #9a4e00;
+  --color-info: #ff8000;
+  --color-spot: #ff8000;
+  --color-on-spot: #111111;
+  --color-panel: #f4f1e9;
+  --color-panel-line: rgb(32 35 32 / 0.16);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 14px;
+  --radius-xl: 24px;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html,
+  body {
+    min-height: 100%;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: #ff8000;
+    color: #111111;
+  }
+
+  :focus-visible {
+    outline: 2px solid #ff8000;
+    outline-offset: 2px;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+
+  .tabular,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "ss01" 1;
+  }
+}
+
+@layer utilities {
+  .hairline {
+    box-shadow: inset 0 -1px 0 var(--color-line);
+  }
+
+  .hairline-y {
+    box-shadow: inset -1px 0 0 var(--color-line);
+  }
+
+  .surface {
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-line);
+  }
+
+  .xplot-card {
+    background: #202320;
+    border: 1px solid rgb(255 128 0 / 0.45);
+    color: #e6e1d6;
+    --text: #e6e1d6;
+    --muted: #b7b2a8;
+    --border: rgb(255 128 0 / 0.45);
+    --surface: #202320;
+    --ok: #5dcca0;
+    --bad: #ff9b93;
+    --warn: #ffb020;
+    --info: #ff8000;
+    --accent: #ff8000;
+  }
+
+  .section-label {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    letter-spacing: 0.02em;
+    color: var(--color-ink-muted);
+  }
+
+  .xplot-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(32 35 32 / 0.35) transparent;
+  }
+}
+
+.xplot-app {
+  --bg: #f4f1e9;
+  --surface: #202320;
+  --border: rgb(32 35 32 / 0.16);
+  --text: #111111;
+  --muted: #5c564e;
+  --accent: #ff8000;
+  --ok: #0f6b45;
+  --warn: #9a4e00;
+  --bad: #b42318;
+  --info: #9a4e00;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-xplot-sans), Inter, ui-sans-serif, system-ui, sans-serif;
+  min-height: 100dvh;
+}
+
+.xplot-app a {
+  color: #111111;
+  text-decoration-color: #ff8000;
+  text-underline-offset: 3px;
+}
+
+.xplot-app a:hover {
+  text-decoration: underline;
+}
+
+.xplot-card a {
+  color: #ff8000;
+}
+
+.xplot-app button,
+.xplot-btn {
+  background: #ff8000;
+  color: #111111;
+  border: 1px solid #ff8000;
+  font-weight: 600;
+}
+
+.xplot-app button:hover,
+.xplot-btn:hover {
+  background: #e67300;
+}
+
+.xplot-figure {
+  color: #ff8000;
+}
+
+.xplot-nav {
+  color: #111111;
+  border-bottom: 2px solid #ff8000;
+  padding-bottom: 2px;
+  text-decoration: none;
+}
+
+.xplot-card input {
+  color: #f4f1e9;
+  background: #202320;
+}
+
+.xplot-card input::placeholder {
+  color: #b7b2a8;
+}
+
+.xplot-app .mono {
+  font-family: var(--font-xplot-mono), "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xplot-app * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.xplot-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .xplot-scroll::-webkit-scrollbar-thumb {
+    background: rgb(32 35 32 / 0.28);
+  }
+
+  .xplot-scroll::-webkit-scrollbar-thumb:hover {
+  background: #ff8000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-ok {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes xplot-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes xplot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes xplot-edge-dash {
+  to {
+    stroke-dashoffset: -46;
+  }
+}
+
+@keyframes xplot-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.xplot-draw {
+  transform-origin: left center;
+  animation: xplot-draw 1.6s ease-out both;
+}
+
+@keyframes xplot-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-dash {
+  animation: xplot-dash 18s linear infinite;
+}
+
+.animate-live {
+  animation: xplot-pulse 2.4s ease-in-out infinite;
+}
+
+.xplot-edge-flow {
+  animation: xplot-edge-dash 2.8s linear infinite;
+}
+
+.xplot-ticker-track {
+  animation: xplot-ticker 36s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-dash,
+  .animate-live,
+  .xplot-edge-flow,
+  .xplot-ticker-track,
+  .xplot-draw {
+    animation: none;
+  }
+}
+
+.react-flow {
+  --xy-background-color: #f4f1e9;
+  background: #f4f1e9;
+}
+
+.react-flow__controls-button {
+  background: #202320 !important;
+  border-bottom: 1px solid rgb(255 128 0 / 0.45) !important;
+  fill: #e6e1d6 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #ff8000 !important;
+  fill: #111111 !important;
+}
+
+.react-flow__minimap {
+  background: #202320 !important;
+}
+
+.react-flow__edge-text {
+  fill: #5c564e;
+}
+
+.react-flow__attribution {
+  display: none;
+}
