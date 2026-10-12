@@ -213,6 +213,24 @@
   color: #111111;
 }
 
+.xplot-app button.xplot-text-btn {
+  background: transparent;
+  color: #111111;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-decoration: underline;
+  text-decoration-color: #ff8000;
+  text-underline-offset: 3px;
+}
+
+.xplot-app button.xplot-text-btn:hover {
+  background: transparent;
+  color: #111111;
+}
+
 .xplot-card input {
   color: #f4f1e9;
   background: #202320;

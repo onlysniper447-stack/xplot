@@ -3,8 +3,10 @@ import { notFound } from "next/navigation";
 import { Chip, Freshness, OracleCell, tierTone } from "@/components/xplot/chips";
 import { GapInfo } from "@/components/xplot/equity/gap-info";
 import { EquityTabs } from "@/components/xplot/equity/tabs";
+import { VenuesTable, type VenueRow } from "@/components/xplot/equity/venues-table";
 import { PriceChart } from "@/components/xplot/price-chart";
 import { headerVerdict, verdict, whyGap } from "@/lib/xplot/copy";
+import { liquidityConfidence } from "@/lib/xplot/engines";
 import { formatBps, formatCompactUsd, formatPct, formatUsd, shortAddress } from "@/lib/xplot/format";
 import { actionsFor, alertFor, deviationSeries, envelope, getEquity, instrumentIdFor, marketsFor, referenceFor } from "@/lib/xplot/read";
 import { sessionLabel } from "@/lib/xplot/session";
@@ -51,6 +53,25 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
     dexPrice: equity.dexPrice,
   });
   const displayName = equity.name.replace(/• Robinhood Token/g, "").trim();
+  const venueRows: VenueRow[] = spot.map((market) => {
+    const empty = [market.priceUsd, market.tvlUsd, market.depthUsd, market.impact1k, market.impact10k, market.impact50k].every((value) => value == null);
+    const quote = market.quoteSymbol ?? "—";
+    return {
+      key: `${market.venueId}-${market.poolAddress ?? quote}-${market.feeBps ?? "na"}`,
+      venue: market.venueId === "uniswap-v3" ? "Uniswap v3" : market.venueId,
+      pair: `${equity.ticker}/${quote}`,
+      fee: market.feeBps == null ? "—" : `${market.feeBps} bps`,
+      price: formatUsd(market.priceUsd),
+      tvl: formatCompactUsd(market.tvlUsd),
+      depth: formatCompactUsd(market.depthUsd),
+      impact1k: formatBps(market.impact1k),
+      impact10k: formatBps(market.impact10k),
+      impact50k: formatBps(market.impact50k),
+      confidence: liquidityConfidence(market.depthUsd) ?? "—",
+      tradeHref: market.deeplink,
+      empty,
+    };
+  });
 
   return (
     <article className="space-y-6">
@@ -114,41 +135,62 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
             <div className="space-y-6">
               <section aria-labelledby="venues-heading">
                 <h2 id="venues-heading" className="text-sm font-medium">Spot venues</h2>
-                {spot.length === 0 ? (
-                  <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>No active DEX market.</p>
-                ) : (
-                  <ul className="mt-2 space-y-2">
-                    {spot.map((m) => (
-                      <li key={`${m.venueId}-${m.poolAddress}`} className="xplot-card rounded-xl p-3 text-sm">
-                        <p>{m.venueId} · {m.quoteSymbol} · fee {m.feeBps ?? "—"} bps</p>
-                        <p className="mono mt-1">{formatUsd(m.priceUsd)} · TVL {formatCompactUsd(m.tvlUsd)} · depth {formatCompactUsd(m.depthUsd)}</p>
-                        <p className="mt-1" style={{ color: "var(--muted)" }}>
-                          $1k {formatBps(m.impact1k)} · $10k {formatBps(m.impact10k)} · $50k {formatBps(m.impact50k)}
-                        </p>
-                        <p className="text-xs" style={{ color: "var(--muted)" }}>±1% depth is an in-range lower bound. Adjacent ticks are not included.</p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <div className="mt-2">
+                  <VenuesTable rows={venueRows} />
+                </div>
               </section>
               <section aria-labelledby="ref-heading">
-                <h2 id="ref-heading" className="text-sm font-medium">Reference quotes</h2>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>Reference quote (not liquidity). These prints are excluded from TVL and from the spot price.</p>
-                <ul className="mt-2 space-y-2">
-                  {referenceMarkets.map((m) => (
-                    <li key={m.venueId} className="xplot-card rounded-xl p-3 text-sm">
-                      <p>{m.venueId} · link only until a public read path is verified</p>
-                      {m.deeplink ? (
-                        <a href={m.deeplink} rel="noopener noreferrer" className="underline">
-                          Trade on Arcus ↗
-                        </a>
-                      ) : null}
-                    </li>
-                  ))}
-                  <li className="text-sm" style={{ color: "var(--muted)" }}>
-                    1inch and Rialto are not wired. No quote is shown for them.
-                  </li>
-                </ul>
+                <h2 id="ref-heading" className="text-sm font-medium">Reference quotes (not liquidity)</h2>
+                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>These prints are excluded from TVL and from the spot price.</p>
+                <div className="xplot-scroll mt-2 overflow-x-auto">
+                  <table className="xplot-table w-full text-left text-sm">
+                    <caption className="sr-only">Reference quotes (not liquidity)</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Source</th>
+                        <th scope="col">Quote</th>
+                        <th scope="col">Note</th>
+                        <th scope="col">Link</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {referenceMarkets.map((market) => (
+                        <tr key={market.venueId}>
+                          <td>{market.venueId === "arcus-spot" ? "Arcus" : market.venueId}</td>
+                          <td className="mono">{formatUsd(market.priceUsd)}</td>
+                          <td>Link only until a public read path is verified</td>
+                          <td>
+                            {market.deeplink ? (
+                              <a href={market.deeplink} rel="noopener noreferrer">Trade</a>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {referenceMarkets.some((market) => market.venueId === "arcus-spot") ? null : (
+                        <tr>
+                          <td>Arcus</td>
+                          <td className="mono">—</td>
+                          <td>No reference link stored.</td>
+                          <td>—</td>
+                        </tr>
+                      )}
+                      <tr>
+                        <td>1inch</td>
+                        <td className="mono">—</td>
+                        <td>Not wired. No quote is shown.</td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td>Rialto</td>
+                        <td className="mono">—</td>
+                        <td>Not wired. No quote is shown.</td>
+                        <td>—</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </section>
             </div>
           ),
