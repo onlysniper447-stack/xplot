@@ -14,8 +14,8 @@ export function MarketingNav() {
         <Link href="/" className="text-sm font-semibold tracking-[0.18em] text-[#111111] no-underline">
           XPLOT
         </Link>
-        <div className="flex items-center gap-4 md:hidden">
-          <AccountLinks />
+        <div className="md:hidden">
+          <ExploreMarkets />
         </div>
       </div>
       <nav aria-label="Primary" className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#111111]">
@@ -25,26 +25,21 @@ export function MarketingNav() {
           </Link>
         ))}
       </nav>
-      <div className="hidden items-center gap-5 md:flex">
-        <AccountLinks />
+      <div className="hidden md:block">
+        <ExploreMarkets />
       </div>
     </header>
   );
 }
 
-function AccountLinks() {
+function ExploreMarkets() {
   return (
-    <>
-      <Link href="/login" className="text-sm text-[#111111] no-underline hover:underline">
-        Log in
-      </Link>
-      <Link
-        href="/markets"
-        className="inline-flex h-11 items-center bg-[#FF8000] px-4 text-sm font-semibold text-[#111111] no-underline hover:bg-[#E67300]"
-      >
-        Explore markets
-      </Link>
-    </>
+    <Link
+      href="/markets"
+      className="inline-flex h-11 items-center bg-[#FF8000] px-4 text-sm font-semibold text-[#111111] no-underline hover:bg-[#E67300]"
+    >
+      Explore markets
+    </Link>
   );
 }
 
