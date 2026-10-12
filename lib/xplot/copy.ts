@@ -62,6 +62,53 @@ export function verdict(input: {
   return `${sessionLabel(input.session, input.sessionSource)} DEX is ${formatPct(input.spreadPct)} from the oracle.`;
 }
 
+const REASON_PLAIN: Record<string, string> = {
+  NO_FEED: "No Chainlink feed is listed for this token.",
+  FEED_STALE: "The oracle print is stale.",
+  NO_POOL: "No spot pool was found.",
+  POOL_TVL_BELOW_MIN: "Pool liquidity is under the minimum.",
+  INACTIVE: "This token is inactive.",
+  TRADING_HALT: "A trading halt is reported.",
+  DECIMALS_MISMATCH: "Token decimals do not match the registry.",
+  MULTIPLIER_MISSING: "The multiplier is missing.",
+  MULTIPLIER_MISMATCH: "The multiplier does not match the registry.",
+  SYMBOL_MISMATCH: "The symbol does not match the registry.",
+};
+
+export function reasonPlain(code: string): string {
+  return REASON_PLAIN[code] ?? "A coverage check failed.";
+}
+
+/** Slim notice for a real token problem. A venue-wide adapter outage stays on the shell banner. */
+export function qualityNotice(input: {
+  tier: Tier;
+  halt: boolean;
+  oracle: OracleState;
+  dexPrice: number | null;
+  oraclePrice: number | null;
+  reasons: string[];
+  adapterDown: boolean;
+}): string | null {
+  const brokenRegistry = input.reasons.some((code) =>
+    code === "SYMBOL_MISMATCH" || code === "DECIMALS_MISMATCH" || code === "MULTIPLIER_MISMATCH" || code === "MULTIPLIER_MISSING",
+  );
+  if (input.halt || input.reasons.includes("TRADING_HALT")) {
+    return "A trading halt is reported. Dislocation alerts are suppressed.";
+  }
+  if (brokenRegistry) return "This token's registry data does not match the on-chain instrument.";
+  if ((input.oracle === "stale" || input.oracle === "unread") && input.tier !== "LISTED_ONLY" && input.tier !== "DEX_ONLY") {
+    return "The oracle update is delayed.";
+  }
+  if (input.reasons.includes("INACTIVE")) return "This token is inactive.";
+  if (input.tier === "LISTED_ONLY") return "No live price is available for this token.";
+  if (input.adapterDown && input.oraclePrice != null) return "DEX prices are temporarily unavailable. Showing oracle price.";
+  if (input.adapterDown) return "DEX prices are temporarily unavailable.";
+  if (input.dexPrice == null && input.oraclePrice != null) return "No DEX market is available. Showing the oracle price.";
+  if (input.tier === "DEX_ONLY") return "No oracle reference. Spread is unavailable.";
+  if (input.reasons.includes("POOL_TVL_BELOW_MIN")) return "Pools exist, but none meet the liquidity minimum.";
+  return null;
+}
+
 export function whyGap(): string {
   return "Stock tokens keep trading when the US cash session is shut. The Chainlink feed then holds the last close, while a pool can print a different price. XPLOT measures that gap. It does not call either print wrong.";
 }

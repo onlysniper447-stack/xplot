@@ -7,7 +7,7 @@ import { IssuerNote } from "@/components/xplot/equity/issuer-note";
 import { EquityTabs } from "@/components/xplot/equity/tabs";
 import { VenuesTable, type VenueRow } from "@/components/xplot/equity/venues-table";
 import { PriceChart } from "@/components/xplot/price-chart";
-import { headerVerdict, verdict, whyGap } from "@/lib/xplot/copy";
+import { headerVerdict, qualityNotice, reasonPlain, verdict, whyGap } from "@/lib/xplot/copy";
 import { liquidityConfidence } from "@/lib/xplot/engines";
 import { formatBps, formatCompactUsd, formatPct, formatUsd } from "@/lib/xplot/format";
 import { actionsFor, alertFor, deviationSeries, envelope, getEquity, instrumentIdFor, marketsFor, referenceFor } from "@/lib/xplot/read";
@@ -55,6 +55,16 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
     dexPrice: equity.dexPrice,
   });
   const displayName = equity.name.replace(/• Robinhood Token/g, "").trim();
+  const adapterDown = equity.notes.length > 0 || Boolean(env.collector?.uniswapDown);
+  const notice = qualityNotice({
+    tier: equity.tier,
+    halt: equity.halt,
+    oracle: equity.oracleState,
+    dexPrice: equity.dexPrice,
+    oraclePrice: equity.oraclePrice,
+    reasons: equity.reasons,
+    adapterDown,
+  });
   const venueRows: VenueRow[] = spot.map((market) => {
     const empty = [market.priceUsd, market.tvlUsd, market.depthUsd, market.impact1k, market.impact10k, market.impact50k].every((value) => value == null);
     const quote = market.quoteSymbol ?? "—";
@@ -87,8 +97,26 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </div>
         <p className="mt-3 flex items-center gap-2 text-sm">
           <span>{statusLine}</span>
-          <GapInfo why={whyGap()} verdictText={line} alert={alert} notes={equity.notes} />
+          <GapInfo why={whyGap()} verdictText={line} alert={alert} notes={[]} />
         </p>
+        {notice ? (
+          <p className="mt-3 text-sm" role="status" style={{ color: "var(--warn)" }}>
+            <span aria-hidden="true">▲ </span>
+            {notice}
+            {equity.reasons.length > 0 ? (
+              <details className="mt-1">
+                <summary>Details</summary>
+                <ul className="mt-1 space-y-1" style={{ color: "var(--muted)" }}>
+                  {equity.reasons.map((code) => (
+                    <li key={code}>
+                      {reasonPlain(code)} <span className="mono text-xs">({code})</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </p>
+        ) : null}
       </header>
 
       <section className="xplot-card rounded-xl p-4" aria-label="Prices">
@@ -120,12 +148,6 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
               <p className="text-sm" style={{ color: "var(--muted)" }}>
                 Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
               </p>
-              {equity.tier !== "FULL" ? (
-                <section className="xplot-card rounded-xl p-4">
-                  <h2 className="text-sm font-medium">Data quality</h2>
-                  <p className="mt-2 text-sm">This equity is {equity.tier}. {equity.reasons.length ? equity.reasons.join(", ") : "No extra reason code."}</p>
-                </section>
-              ) : null}
               {equity.session === "open" && reference ? (
                 <p className="text-sm">
                   Chainlink vs Robinhood reference: {formatPct(reference.oracleVsReferencePct)} (reference generated {reference.generatedAt ?? "—"}).
