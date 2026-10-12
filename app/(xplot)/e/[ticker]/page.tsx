@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Chip, Freshness, OracleCell, tierTone } from "@/components/xplot/chips";
+import { GapInfo } from "@/components/xplot/equity/gap-info";
 import { PriceChart } from "@/components/xplot/price-chart";
-import { verdict, whyGap } from "@/lib/xplot/copy";
+import { headerVerdict, verdict, whyGap } from "@/lib/xplot/copy";
 import { formatBps, formatCompactUsd, formatPct, formatUsd, shortAddress } from "@/lib/xplot/format";
 import { actionsFor, alertFor, deviationSeries, envelope, getEquity, instrumentIdFor, marketsFor, referenceFor } from "@/lib/xplot/read";
 import { sessionLabel } from "@/lib/xplot/session";
@@ -40,27 +41,35 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
     spreadPct: equity.spreadPct,
     confidence: equity.liquidityConfidence,
   });
+  const statusLine = headerVerdict({
+    tier: equity.tier,
+    halt: equity.halt,
+    session: equity.session,
+    sessionSource: equity.sessionSource,
+    oracle: equity.oracleState,
+    dexPrice: equity.dexPrice,
+  });
+  const displayName = equity.name.replace(/• Robinhood Token/g, "").trim();
 
   return (
     <article className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs" style={{ color: "var(--muted)" }}>{equity.assetClass === "etf" ? "ETF" : "Stock"} · issuer note</p>
-          <h1 className="text-2xl font-semibold">{equity.name.replace(/• Robinhood Token/g, "").trim()}</h1>
-          <p className="mono mt-1 text-sm">
-            {equity.id}
-            <span className="ml-2" style={{ color: "var(--muted)" }}>{equity.ticker}</span>
-          </p>
-          <p className="mt-3 max-w-2xl text-sm">{line}</p>
-          {equity.notes.map((note) => (
-            <p key={note} className="mt-2 max-w-2xl text-sm" role="note" style={{ color: "var(--warn)" }}>{note}</p>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <header>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight">{equity.ticker}</h1>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>{displayName}</p>
+          </div>
           <Chip tone={tierTone(equity.tier)} title={equity.reasons.join(", ") || "No coverage flags"}>{equity.tier}</Chip>
-          <Freshness seconds={env.ages.collector_s} />
         </div>
+        <p className="mt-3 flex items-center gap-2 text-sm">
+          <span>{statusLine}</span>
+          <GapInfo why={whyGap()} verdictText={line} alert={alert} notes={equity.notes} />
+        </p>
       </header>
+
+      <div className="flex flex-wrap gap-2">
+        <Freshness seconds={env.ages.collector_s} />
+      </div>
 
       <section className="grid gap-3 md:grid-cols-4" aria-label="Prices">
         <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
@@ -82,20 +91,6 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </div>
       </section>
 
-      <section className="xplot-card rounded-xl p-4">
-        <h2 className="text-sm font-medium">Reality check</h2>
-        <p className="mt-2 text-sm">{line}</p>
-        {alert ? (
-          <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
-            Open since {alert.startedAt}. Peak spread {formatPct(alert.peak)}.
-          </p>
-        ) : null}
-        <details className="mt-3 text-sm">
-          <summary>Why is there a gap?</summary>
-          <p className="mt-2" style={{ color: "var(--muted)" }}>{whyGap()}</p>
-        </details>
-      </section>
-
       {equity.tier !== "FULL" ? (
         <section className="xplot-card rounded-xl p-4">
           <h2 className="text-sm font-medium">Data quality</h2>
@@ -106,7 +101,8 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
       <section aria-labelledby="instrument-heading">
         <h2 id="instrument-heading" className="text-sm font-medium">Instrument</h2>
         <div className="xplot-card mt-2 rounded-xl p-4">
-          <p className="text-sm">Issuer note · economic exposure only</p>
+          <p className="mono text-sm">{equity.id}</p>
+          <p className="mt-2 text-sm">Issuer note · economic exposure only</p>
           <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
             A Robinhood Stock Token is an issuer debt security. It gives economic exposure and does not confer ownership or shareholder rights. Verified by XPLOT against the Robinhood asset registry.
           </p>
