@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Chip, Freshness, OracleCell, tierTone } from "@/components/xplot/chips";
 import { GapInfo } from "@/components/xplot/equity/gap-info";
+import { EquityTabs } from "@/components/xplot/equity/tabs";
 import { PriceChart } from "@/components/xplot/price-chart";
 import { headerVerdict, verdict, whyGap } from "@/lib/xplot/copy";
 import { formatBps, formatCompactUsd, formatPct, formatUsd, shortAddress } from "@/lib/xplot/format";
@@ -88,102 +89,111 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </div>
       </section>
 
-      <div className="flex flex-wrap gap-2">
-        <Freshness seconds={env.ages.collector_s} />
-      </div>
-      <p className="text-sm" style={{ color: "var(--muted)" }}>
-        Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
-      </p>
-
-      {equity.tier !== "FULL" ? (
-        <section className="xplot-card rounded-xl p-4">
-          <h2 className="text-sm font-medium">Data quality</h2>
-          <p className="mt-2 text-sm">This equity is {equity.tier}. {equity.reasons.length ? equity.reasons.join(", ") : "No extra reason code."}</p>
-        </section>
-      ) : null}
-
-      <section aria-labelledby="instrument-heading">
-        <h2 id="instrument-heading" className="text-sm font-medium">Instrument</h2>
-        <div className="xplot-card mt-2 rounded-xl p-4">
-          <p className="mono text-sm">{equity.id}</p>
-          <p className="mt-2 text-sm">Issuer note · economic exposure only</p>
-          <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-            A Robinhood Stock Token is an issuer debt security. It gives economic exposure and does not confer ownership or shareholder rights. Verified by XPLOT against the Robinhood asset registry.
-          </p>
-          <p className="mono mt-3 text-sm">
-            <a href={`https://robinhoodchain.blockscout.com/address/${equity.address}`} rel="noopener noreferrer">
-              {shortAddress(equity.address)}
-            </a>
-          </p>
-          {equity.pendingMultiplier != null ? (
-            <p className="mt-2 text-sm">A corporate action is pending. Alerts pause around the effective time.</p>
-          ) : null}
-          {actions[0] ? (
-            <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
-              {actions[0].type} · {actions[0].status} · {actions[0].process_date ?? "date unavailable"}
-            </p>
-          ) : null}
-        </div>
-      </section>
-
-      <section aria-labelledby="venues-heading">
-        <h2 id="venues-heading" className="text-sm font-medium">Spot venues</h2>
-        {spot.length === 0 ? (
-          <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>No active DEX market.</p>
-        ) : (
-          <ul className="mt-2 space-y-2">
-            {spot.map((m) => (
-              <li key={`${m.venueId}-${m.poolAddress}`} className="xplot-card rounded-xl p-3 text-sm">
-                <p>{m.venueId} · {m.quoteSymbol} · fee {m.feeBps ?? "—"} bps</p>
-                <p className="mono mt-1">{formatUsd(m.priceUsd)} · TVL {formatCompactUsd(m.tvlUsd)} · depth {formatCompactUsd(m.depthUsd)}</p>
-                <p className="mt-1" style={{ color: "var(--muted)" }}>
-                  $1k {formatBps(m.impact1k)} · $10k {formatBps(m.impact10k)} · $50k {formatBps(m.impact50k)}
-                </p>
-                <p className="text-xs" style={{ color: "var(--muted)" }}>±1% depth is an in-range lower bound. Adjacent ticks are not included.</p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section aria-labelledby="ref-heading">
-        <h2 id="ref-heading" className="text-sm font-medium">Reference quotes</h2>
-        <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>Reference quote (not liquidity). These prints are excluded from TVL and from the spot price.</p>
-        <ul className="mt-2 space-y-2">
-          {referenceMarkets.map((m) => (
-            <li key={m.venueId} className="xplot-card rounded-xl p-3 text-sm">
-              <p>{m.venueId} · link only until a public read path is verified</p>
-              {m.deeplink ? (
-                <a href={m.deeplink} rel="noopener noreferrer" className="underline">
-                  Trade on Arcus ↗
-                </a>
+      <EquityTabs
+        panels={{
+          overview: (
+            <div className="space-y-4">
+              <Freshness seconds={env.ages.collector_s} />
+              <p className="text-sm" style={{ color: "var(--muted)" }}>
+                Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
+              </p>
+              {equity.tier !== "FULL" ? (
+                <section className="xplot-card rounded-xl p-4">
+                  <h2 className="text-sm font-medium">Data quality</h2>
+                  <p className="mt-2 text-sm">This equity is {equity.tier}. {equity.reasons.length ? equity.reasons.join(", ") : "No extra reason code."}</p>
+                </section>
               ) : null}
-            </li>
-          ))}
-          <li className="text-sm" style={{ color: "var(--muted)" }}>
-            1inch and Rialto are not wired. No quote is shown for them.
-          </li>
-        </ul>
-      </section>
-
-      {equity.session === "open" && reference ? (
-        <p className="text-sm">
-          Chainlink vs Robinhood reference: {formatPct(reference.oracleVsReferencePct)} (reference generated {reference.generatedAt ?? "—"}).
-        </p>
-      ) : null}
-
-      <section className="xplot-card rounded-xl p-4">
-        <h2 className="text-sm font-medium">Weekend scorecard</h2>
-        <p className="mt-2 text-sm">Not enough data yet.</p>
-      </section>
-
-      <section className="xplot-card rounded-xl p-4 text-sm">
-        <h2 className="font-medium">Developer</h2>
-        <pre className="mono mt-2 overflow-x-auto text-xs">{`curl ${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/v1/equities/${equity.ticker}/health`}</pre>
-        <p className="mt-2">
-          <Link href="/v1/openapi.json" className="underline">OpenAPI</Link>
-        </p>
-      </section>
+              {equity.session === "open" && reference ? (
+                <p className="text-sm">
+                  Chainlink vs Robinhood reference: {formatPct(reference.oracleVsReferencePct)} (reference generated {reference.generatedAt ?? "—"}).
+                </p>
+              ) : null}
+            </div>
+          ),
+          venues: (
+            <div className="space-y-6">
+              <section aria-labelledby="venues-heading">
+                <h2 id="venues-heading" className="text-sm font-medium">Spot venues</h2>
+                {spot.length === 0 ? (
+                  <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>No active DEX market.</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {spot.map((m) => (
+                      <li key={`${m.venueId}-${m.poolAddress}`} className="xplot-card rounded-xl p-3 text-sm">
+                        <p>{m.venueId} · {m.quoteSymbol} · fee {m.feeBps ?? "—"} bps</p>
+                        <p className="mono mt-1">{formatUsd(m.priceUsd)} · TVL {formatCompactUsd(m.tvlUsd)} · depth {formatCompactUsd(m.depthUsd)}</p>
+                        <p className="mt-1" style={{ color: "var(--muted)" }}>
+                          $1k {formatBps(m.impact1k)} · $10k {formatBps(m.impact10k)} · $50k {formatBps(m.impact50k)}
+                        </p>
+                        <p className="text-xs" style={{ color: "var(--muted)" }}>±1% depth is an in-range lower bound. Adjacent ticks are not included.</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+              <section aria-labelledby="ref-heading">
+                <h2 id="ref-heading" className="text-sm font-medium">Reference quotes</h2>
+                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>Reference quote (not liquidity). These prints are excluded from TVL and from the spot price.</p>
+                <ul className="mt-2 space-y-2">
+                  {referenceMarkets.map((m) => (
+                    <li key={m.venueId} className="xplot-card rounded-xl p-3 text-sm">
+                      <p>{m.venueId} · link only until a public read path is verified</p>
+                      {m.deeplink ? (
+                        <a href={m.deeplink} rel="noopener noreferrer" className="underline">
+                          Trade on Arcus ↗
+                        </a>
+                      ) : null}
+                    </li>
+                  ))}
+                  <li className="text-sm" style={{ color: "var(--muted)" }}>
+                    1inch and Rialto are not wired. No quote is shown for them.
+                  </li>
+                </ul>
+              </section>
+            </div>
+          ),
+          token: (
+            <section aria-labelledby="instrument-heading">
+              <h2 id="instrument-heading" className="text-sm font-medium">Instrument</h2>
+              <div className="xplot-card mt-2 rounded-xl p-4">
+                <p className="mono text-sm">{equity.id}</p>
+                <p className="mt-2 text-sm">Issuer note · economic exposure only</p>
+                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                  A Robinhood Stock Token is an issuer debt security. It gives economic exposure and does not confer ownership or shareholder rights. Verified by XPLOT against the Robinhood asset registry.
+                </p>
+                <p className="mono mt-3 text-sm">
+                  <a href={`https://robinhoodchain.blockscout.com/address/${equity.address}`} rel="noopener noreferrer">
+                    {shortAddress(equity.address)}
+                  </a>
+                </p>
+                {equity.pendingMultiplier != null ? (
+                  <p className="mt-2 text-sm">A corporate action is pending. Alerts pause around the effective time.</p>
+                ) : null}
+                {actions[0] ? (
+                  <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
+                    {actions[0].type} · {actions[0].status} · {actions[0].process_date ?? "date unavailable"}
+                  </p>
+                ) : null}
+              </div>
+            </section>
+          ),
+          history: (
+            <section className="xplot-card rounded-xl p-4">
+              <h2 className="text-sm font-medium">Weekend scorecard</h2>
+              <p className="mt-2 text-sm">Not enough data yet.</p>
+            </section>
+          ),
+          api: (
+            <section className="xplot-card rounded-xl p-4 text-sm">
+              <h2 className="font-medium">Developer</h2>
+              <pre className="mono mt-2 overflow-x-auto text-xs">{`curl ${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/v1/equities/${equity.ticker}/health`}</pre>
+              <p className="mt-2">
+                <Link href="/v1/openapi.json" className="underline">OpenAPI</Link>
+              </p>
+            </section>
+          ),
+        }}
+      />
     </article>
   );
 }

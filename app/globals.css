@@ -186,6 +186,33 @@
   text-decoration: none;
 }
 
+.xplot-app button.xplot-equity-tab {
+  background: transparent;
+  color: #111111;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.xplot-app button.xplot-equity-tab:hover {
+  background: transparent;
+  color: #111111;
+}
+
+.xplot-app button.xplot-equity-tab[data-state="active"] {
+  background: #ff8000;
+  color: #111111;
+  border-color: #ff8000;
+}
+
+.xplot-app button.xplot-equity-tab[data-state="active"]:hover {
+  background: #e67300;
+  color: #111111;
+}
+
 .xplot-card input {
   color: #f4f1e9;
   background: #202320;
