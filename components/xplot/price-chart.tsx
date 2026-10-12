@@ -15,12 +15,12 @@ export function PriceChart({ points }: { points: Point[] }) {
     const chart: IChartApi = createChart(el, {
       width: el.clientWidth,
       height: 320,
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#b7b2a8", fontSize: 11 },
-      grid: { vertLines: { color: "rgba(255,128,0,0.18)" }, horzLines: { color: "rgba(244,241,233,0.08)" } },
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#5c564e", fontSize: 11 },
+      grid: { vertLines: { color: "rgba(32,35,32,0.12)" }, horzLines: { color: "rgba(32,35,32,0.12)" } },
       timeScale: { timeVisible: true, secondsVisible: false },
     });
     const dex = chart.addSeries(LineSeries, { color: "#FF8000", lineWidth: 2, title: "DEX" });
-    const oracle = chart.addSeries(LineSeries, { color: "#e6e1d6", lineWidth: 1, lineStyle: 2, title: "Oracle" });
+    const oracle = chart.addSeries(LineSeries, { color: "#5c564e", lineWidth: 1, lineStyle: 2, title: "Oracle" });
     const toTime = (ts: string) => Math.floor(new Date(ts).getTime() / 1000) as UTCTimestamp;
     dex.setData(usable.filter((p) => p.dexPrice != null).map((p) => ({ time: toTime(p.ts), value: p.dexPrice as number })));
     oracle.setData(usable.filter((p) => p.oraclePrice != null).map((p) => ({ time: toTime(p.ts), value: p.oraclePrice as number })));

@@ -86,7 +86,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
   });
 
   return (
-    <article className="space-y-6">
+    <article className="xplot-equity mx-auto w-full space-y-6">
       <header>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -119,7 +119,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         ) : null}
       </header>
 
-      <section className="xplot-card rounded-xl p-4" aria-label="Prices">
+      <section className="xplot-panel" aria-label="Prices">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
           <div title="Chainlink price per token, with the age of that print">
@@ -133,7 +133,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </div>
       </section>
 
-      <section aria-labelledby="chart-heading" className="xplot-card rounded-xl p-4">
+      <section aria-labelledby="chart-heading" className="xplot-panel">
         <h2 id="chart-heading" className="text-sm font-medium">DEX and oracle</h2>
         <div className="mt-3">
           <PriceChart points={series} />
@@ -250,13 +250,13 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
             </section>
           ),
           history: (
-            <section className="xplot-card rounded-xl p-4">
+            <section className="xplot-panel">
               <h2 className="text-sm font-medium">Weekend scorecard</h2>
               <p className="mt-2 text-sm">Not enough data yet.</p>
             </section>
           ),
           api: (
-            <section className="xplot-card rounded-xl p-4 text-sm">
+            <section className="xplot-panel text-sm">
               <h2 className="font-medium">Developer</h2>
               <pre className="mono mt-2 overflow-x-auto text-xs">{`curl ${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/v1/equities/${equity.ticker}/health`}</pre>
               <p className="mt-2">
@@ -274,7 +274,7 @@ function Price({ label, value, hint }: { label: string; value: string; hint: str
   return (
     <div title={hint}>
       <p className="text-xs" style={{ color: "var(--muted)" }}>{label}</p>
-      <p className="mono xplot-figure mt-1 text-lg">{value}</p>
+      <p className="mono mt-1 text-lg" style={{ color: "var(--text)" }}>{value}</p>
     </div>
   );
 }

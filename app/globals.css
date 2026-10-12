@@ -231,6 +231,24 @@
   color: #111111;
 }
 
+.xplot-equity {
+  max-width: 1100px;
+}
+
+.xplot-panel {
+  background: var(--color-panel);
+  color: var(--text);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.xplot-equity .xplot-table :is(th, td) {
+  height: 48px;
+  padding: 8px 12px;
+  vertical-align: middle;
+}
+
 .xplot-card input {
   color: #f4f1e9;
   background: #202320;
