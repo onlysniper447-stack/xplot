@@ -275,6 +275,17 @@
   padding: 16px;
 }
 
+.xplot-skeleton {
+  background: rgb(32 35 32 / 0.08);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  animation: xplot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes xplot-pulse {
+  50% { opacity: 0.55; }
+}
+
 .xplot-equity .xplot-table :is(th, td) {
   height: 48px;
   padding: 8px 12px;

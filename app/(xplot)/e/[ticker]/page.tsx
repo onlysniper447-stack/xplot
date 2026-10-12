@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Chip, Freshness, OracleCell, tierTone } from "@/components/xplot/chips";
 import { CopyAddress } from "@/components/xplot/equity/copy-address";
+import { EmptyState } from "@/components/xplot/equity/empty";
 import { GapInfo } from "@/components/xplot/equity/gap-info";
 import { IssuerNote } from "@/components/xplot/equity/issuer-note";
 import { EquityTabs } from "@/components/xplot/equity/tabs";
@@ -143,7 +144,9 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
       <div className="xplot-area-tabs min-w-0">
       <EquityTabs
         panels={{
-          overview: (
+          overview: equity.underlyingPrice == null && equity.multiplier == null && !(equity.session === "open" && reference) ? (
+            <EmptyState title="No overview yet">This token has no underlying price, multiplier, or cash-session reference comparison.</EmptyState>
+          ) : (
             <div className="space-y-4">
               <p className="text-sm" style={{ color: "var(--muted)" }}>
                 Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
@@ -152,7 +155,11 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
                 <p className="text-sm">
                   Chainlink vs Robinhood reference: {formatPct(reference.oracleVsReferencePct)} (reference generated {reference.generatedAt ?? "—"}).
                 </p>
-              ) : null}
+              ) : (
+                <p className="text-sm" style={{ color: "var(--muted)" }}>
+                  Chainlink vs Robinhood reference is shown during the cash session.
+                </p>
+              )}
             </div>
           ),
           venues: (
@@ -218,7 +225,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
               </section>
             </div>
           ),
-          token: (
+          token: equity.address ? (
             <section aria-labelledby="instrument-heading" className="space-y-3 text-sm">
               <h2 id="instrument-heading" className="sr-only">Token</h2>
               <div className="flex flex-wrap items-center gap-2">
@@ -240,7 +247,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
               {equity.pendingMultiplier != null ? (
                 <p>Pending multiplier {equity.pendingMultiplier}. A corporate action is pending. Alerts pause around the effective time.</p>
               ) : (
-                <p style={{ color: "var(--muted)" }}>No pending corporate action.</p>
+                <EmptyState title="No pending corporate action">Alerts stay on. A pending multiplier would show here.</EmptyState>
               )}
               {actions[0] ? (
                 <p style={{ color: "var(--muted)" }}>
@@ -248,21 +255,25 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
                 </p>
               ) : null}
             </section>
+          ) : (
+            <EmptyState title="No instrument">This ticker has no on-chain address in the registry.</EmptyState>
           ),
-          history: (
-            <section className="xplot-panel">
-              <h2 className="text-sm font-medium">Weekend scorecard</h2>
-              <p className="mt-2 text-sm">Not enough data yet.</p>
-            </section>
+          history: series.length < 2 ? (
+            <EmptyState title="No history yet">The chart fills as the collector runs. History is not backfilled.</EmptyState>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm">{series.length} prints are in the chart above.</p>
+              <EmptyState title="No weekend scorecard yet">It needs a stored open and the prior close.</EmptyState>
+            </div>
           ),
           api: (
-            <section className="xplot-panel text-sm">
-              <h2 className="font-medium">Developer</h2>
-              <pre className="mono mt-2 overflow-x-auto text-xs">{`curl ${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/v1/equities/${equity.ticker}/health`}</pre>
-              <p className="mt-2">
+            <div className="space-y-3 text-sm">
+              <EmptyState title="No sample body stored">This page does not cache a response. The health route is read-only and needs no key.</EmptyState>
+              <pre className="mono overflow-x-auto text-xs">{`curl ${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/v1/equities/${equity.ticker}/health`}</pre>
+              <p>
                 <Link href="/v1/openapi.json" className="underline">OpenAPI</Link>
               </p>
-            </section>
+            </div>
           ),
         }}
       />

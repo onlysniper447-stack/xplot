@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { EmptyState } from "@/components/xplot/equity/empty";
 
 export type VenueRow = {
   key: string;
@@ -24,13 +25,13 @@ export function VenuesTable({ rows }: { rows: VenueRow[] }) {
   const filled = rows.filter((row) => !row.empty);
 
   if (rows.length === 0) {
-    return <p className="text-sm" style={{ color: "var(--muted)" }}>No active DEX market.</p>;
+    return <EmptyState title="No spot market">No active DEX pool is listed for this token.</EmptyState>;
   }
 
   if (filled.length === 0 && !showEmpty) {
     return (
-      <div className="space-y-2">
-        <p className="text-sm">No pool has a price or liquidity print.</p>
+      <div className="space-y-3">
+        <EmptyState title="No pool data">No pool has a price or liquidity print.</EmptyState>
         <p className="flex flex-wrap items-center gap-2 text-sm" style={{ color: "var(--muted)" }}>
           <span>{emptyCount} empty pools hidden (no liquidity)</span>
           <button type="button" className="xplot-text-btn" onClick={() => setShowEmpty(true)}>
