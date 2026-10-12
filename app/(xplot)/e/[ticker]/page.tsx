@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Chip, Freshness, OracleCell, tierTone } from "@/components/xplot/chips";
+import { CopyAddress } from "@/components/xplot/equity/copy-address";
 import { GapInfo } from "@/components/xplot/equity/gap-info";
+import { IssuerNote } from "@/components/xplot/equity/issuer-note";
 import { EquityTabs } from "@/components/xplot/equity/tabs";
 import { VenuesTable, type VenueRow } from "@/components/xplot/equity/venues-table";
 import { PriceChart } from "@/components/xplot/price-chart";
 import { headerVerdict, verdict, whyGap } from "@/lib/xplot/copy";
 import { liquidityConfidence } from "@/lib/xplot/engines";
-import { formatBps, formatCompactUsd, formatPct, formatUsd, shortAddress } from "@/lib/xplot/format";
+import { formatBps, formatCompactUsd, formatPct, formatUsd } from "@/lib/xplot/format";
 import { actionsFor, alertFor, deviationSeries, envelope, getEquity, instrumentIdFor, marketsFor, referenceFor } from "@/lib/xplot/read";
 import { sessionLabel } from "@/lib/xplot/session";
 
@@ -195,28 +197,34 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
             </div>
           ),
           token: (
-            <section aria-labelledby="instrument-heading">
-              <h2 id="instrument-heading" className="text-sm font-medium">Instrument</h2>
-              <div className="xplot-card mt-2 rounded-xl p-4">
-                <p className="mono text-sm">{equity.id}</p>
-                <p className="mt-2 text-sm">Issuer note · economic exposure only</p>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  A Robinhood Stock Token is an issuer debt security. It gives economic exposure and does not confer ownership or shareholder rights. Verified by XPLOT against the Robinhood asset registry.
-                </p>
-                <p className="mono mt-3 text-sm">
-                  <a href={`https://robinhoodchain.blockscout.com/address/${equity.address}`} rel="noopener noreferrer">
-                    {shortAddress(equity.address)}
-                  </a>
-                </p>
-                {equity.pendingMultiplier != null ? (
-                  <p className="mt-2 text-sm">A corporate action is pending. Alerts pause around the effective time.</p>
-                ) : null}
-                {actions[0] ? (
-                  <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
-                    {actions[0].type} · {actions[0].status} · {actions[0].process_date ?? "date unavailable"}
-                  </p>
-                ) : null}
+            <section aria-labelledby="instrument-heading" className="space-y-3 text-sm">
+              <h2 id="instrument-heading" className="sr-only">Token</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip tone="info">{equity.assetClass === "etf" ? "ETF" : "Stock"}</Chip>
+                <span className="inline-flex items-center gap-2">
+                  Issuer note · economic exposure only
+                  <IssuerNote />
+                </span>
               </div>
+              <p className="mono text-xs" style={{ color: "var(--muted)" }}>{equity.id}</p>
+              <p className="flex flex-wrap items-center gap-2">
+                <span className="mono break-all">{equity.address}</span>
+                <CopyAddress address={equity.address} />
+                <a href={`https://robinhoodchain.blockscout.com/address/${equity.address}`} rel="noopener noreferrer">
+                  Explorer
+                </a>
+              </p>
+              <p>Multiplier {equity.multiplier ?? "—"}</p>
+              {equity.pendingMultiplier != null ? (
+                <p>Pending multiplier {equity.pendingMultiplier}. A corporate action is pending. Alerts pause around the effective time.</p>
+              ) : (
+                <p style={{ color: "var(--muted)" }}>No pending corporate action.</p>
+              )}
+              {actions[0] ? (
+                <p style={{ color: "var(--muted)" }}>
+                  {actions[0].type} · {actions[0].status} · {actions[0].process_date ?? "date unavailable"}
+                </p>
+              ) : null}
             </section>
           ),
           history: (
