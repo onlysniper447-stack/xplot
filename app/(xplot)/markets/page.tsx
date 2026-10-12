@@ -2,18 +2,48 @@ import Link from "next/link";
 import { Chip, Freshness, OracleCell, SpreadCell, statusTone, tierTone } from "@/components/xplot/chips";
 import { formatCompactUsd, formatPct, formatUsd } from "@/lib/xplot/format";
 import { alertCopy } from "@/lib/xplot/engines";
-import { coverageCounts, envelope, verifyAddress } from "@/lib/xplot/read";
+import { coverageCounts, envelope, verifyAddress, type EquitySummary } from "@/lib/xplot/read";
+import { referenceMid, robinhoodQuote } from "@/lib/xplot/reference";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q = "" } = await searchParams;
+function hasLivePrint(row: EquitySummary) {
+  return row.oraclePrice != null || row.dexPrice != null;
+}
+
+function byLiquidity(a: EquitySummary, b: EquitySummary) {
+  if (a.tvlUsd == null && b.tvlUsd == null) return a.ticker.localeCompare(b.ticker);
+  if (a.tvlUsd == null) return 1;
+  if (b.tvlUsd == null) return -1;
+  if (a.tvlUsd !== b.tvlUsd) return b.tvlUsd - a.tvlUsd;
+  return a.ticker.localeCompare(b.ticker);
+}
+
+function listHref(q: string, showAll: boolean) {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
+  if (showAll) params.set("all", "1");
+  const text = params.toString();
+  return text ? `/markets?${text}` : "/markets";
+}
+
+export default async function HomePage({ searchParams }: { searchParams: Promise<{ q?: string; all?: string }> }) {
+  const { q = "", all = "" } = await searchParams;
   const env = await envelope();
   const { counts, rows, tracked, alerts, largestSpread } = await coverageCounts();
+  const showAll = all === "1";
   const needle = q.trim().toLowerCase();
-  const shown = needle
-    ? rows.filter((row) => `${row.ticker} ${row.name} ${row.id} ${row.address}`.toLowerCase().includes(needle))
-    : rows;
+  const universe = showAll ? rows : rows.filter(hasLivePrint);
+  const shown = (needle
+    ? universe.filter((row) => `${row.ticker} ${row.name} ${row.id} ${row.address}`.toLowerCase().includes(needle))
+    : universe
+  ).sort(byLiquidity);
+  const reference = new Map<string, number | null>();
+  await Promise.all(
+    shown.map(async (row) => {
+      reference.set(row.ticker, referenceMid(await robinhoodQuote(row.ticker)));
+    }),
+  );
   const address = /^0x[0-9a-fA-F]{40}$/.test(q.trim()) ? await verifyAddress(q.trim()) : null;
   const active = rows.filter((row) => row.alert);
   const age = env.ages.collector_s;
@@ -79,7 +109,17 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           No snapshot yet. The collector reads the Robinhood asset registry before this table can fill. Run <span className="mono">npm run collector</span>.
         </p>
       ) : (
-        <EquityTable rows={shown} query={q} />
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p style={{ color: "var(--muted)" }}>
+              {showAll ? `${shown.length} listed tokens` : `${shown.length} tokens with an oracle or DEX print`}
+            </p>
+            <Link href={listHref(q, !showAll)} className="inline-flex min-h-12 items-center rounded-full border px-5 font-semibold no-underline" style={{ borderColor: "#FF8000" }}>
+              {showAll ? "Show live data" : "Show all listed tokens"}
+            </Link>
+          </div>
+          <EquityTable rows={shown} query={q} reference={reference} />
+        </div>
       )}
     </div>
   );
@@ -94,32 +134,46 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EquityTable({ rows, query }: { rows: Awaited<ReturnType<typeof coverageCounts>>["rows"]; query: string }) {
+function EquityTable({
+  rows,
+  query,
+  reference,
+}: {
+  rows: EquitySummary[];
+  query: string;
+  reference: Map<string, number | null>;
+}) {
   if (rows.length === 0) {
-    return <p className="text-sm">No listed Stock Token matches “{query}”.</p>;
+    return <p>{query.trim() ? `No listed Stock Token matches “${query}”.` : "No tokens with an oracle or DEX print in this view."}</p>;
   }
   return (
     <div>
       <div className="hidden md:block">
         <table className="xplot-table w-full text-left">
-          <caption className="sr-only">Listed Robinhood Stock Tokens</caption>
+          <caption className="sr-only">Robinhood Stock Tokens with oracle or DEX prints. The Robinhood reference column is not onchain.</caption>
           <thead>
             <tr style={{ color: "var(--muted)" }}>
-              {["Equity", "DEX price", "Oracle (age)", "Spread", "Liquidity", "Status", "Tier"].map((h) => (
-                <th key={h} scope="col" className="px-2 py-2 font-medium">{h}</th>
-              ))}
+              <th scope="col" className="font-medium">Equity</th>
+              <th scope="col" className="font-medium">DEX price</th>
+              <th scope="col" className="font-medium">Oracle (age)</th>
+              <th scope="col" className="font-medium">Robinhood reference<span className="block font-normal">not onchain</span></th>
+              <th scope="col" className="font-medium">Spread</th>
+              <th scope="col" className="font-medium">Liquidity</th>
+              <th scope="col" className="font-medium">Status</th>
+              <th scope="col" className="font-medium">Tier</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-                <th scope="row" className="px-2 py-3 font-medium">
+                <th scope="row" className="font-medium">
                   <Link href={`/e/${row.ticker}`}>{row.ticker}</Link>
                   <span className="mt-0.5 block text-xs font-normal" style={{ color: "var(--muted)" }}>{row.name.replace(/• Robinhood Token/g, "").trim()}</span>
                 </th>
-                <td className="mono px-2 py-3">{formatUsd(row.dexPrice)}</td>
-                <td className="px-2 py-3"><OracleCell row={row} /></td>
-                <td className="px-2 py-3"><SpreadCell value={row.spreadPct} /></td>
+                <td className="mono">{formatUsd(row.dexPrice)}</td>
+                <td><OracleCell row={row} /></td>
+                <td className="mono" title="Robinhood reference quote. Not an on-chain price.">{formatUsd(reference.get(row.ticker) ?? null)}</td>
+                <td><SpreadCell value={row.spreadPct} /></td>
                 <td className="px-2 py-3">{row.liquidityConfidence ?? "—"}<span className="block text-xs" style={{ color: "var(--muted)" }}>{formatCompactUsd(row.tvlUsd)}</span></td>
                 <td className="px-2 py-3"><Chip tone={statusTone(row.status)}>{row.status}</Chip></td>
                 <td className="px-2 py-3">
@@ -138,8 +192,9 @@ function EquityTable({ rows, query }: { rows: Awaited<ReturnType<typeof coverage
           <li key={row.id} className="xplot-card rounded-xl p-3">
             <Link href={`/e/${row.ticker}`} className="font-medium">{row.ticker}</Link>
             <p className="text-xs" style={{ color: "var(--muted)" }}>{row.name}</p>
-            <p className="mono mt-2 text-sm">DEX {formatUsd(row.dexPrice)}</p>
+            <p className="mono mt-2">DEX {formatUsd(row.dexPrice)}</p>
             <OracleCell row={row} />
+            <p className="mono mt-1">Reference {formatUsd(reference.get(row.ticker) ?? null)} <span style={{ color: "var(--muted)" }}>not onchain</span></p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Chip tone={statusTone(row.status)}>{row.status}</Chip>
               <Chip tone={tierTone(row.tier)}>{row.tier}</Chip>

@@ -29,6 +29,7 @@ import {
   type SessionName,
 } from "../xplot/engines";
 import { isEtfName, tickerFromEquityFeed } from "../xplot/feeds";
+import { robinhoodQuote } from "../xplot/reference";
 import { resolveSession } from "../xplot/session";
 
 const ASSETS_URL = "https://api.robinhood.com/rhj/assets";
@@ -122,11 +123,6 @@ const QuoteSchema = z.object({
   isTradingHalt: z.boolean(),
   generatedAt: z.string(),
 });
-
-const PriceSchema = z.union([
-  z.object({ quotes: z.array(QuoteSchema) }),
-  QuoteSchema,
-]);
 
 const FeedSchema = z.object({
   name: z.string(),
@@ -1148,12 +1144,7 @@ async function upsertMarket(instrumentId: number, quoteSymbol: string, quoteAddr
 }
 
 async function readReference(symbol: string) {
-  try {
-    const body = PriceSchema.parse(await withRetry(() => fetchJson(`${PRICES_URL}/${encodeURIComponent(symbol)}`)));
-    return "quotes" in body ? body.quotes[0] ?? null : body;
-  } catch {
-    return null;
-  }
+  return robinhoodQuote(symbol);
 }
 
 async function syncCorporateActions(instruments: InstrumentRow[]) {
