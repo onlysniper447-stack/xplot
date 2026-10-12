@@ -195,14 +195,17 @@ async function fetchJson(url: string): Promise<unknown> {
   return await res.json();
 }
 
-async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
   let last: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
       return await fn();
     } catch (error) {
       last = error;
-      await sleep(1_000 * (i + 1));
+      if (i === attempts - 1) break;
+      const wait = isRateLimit(error) ? 1_500 * 2 ** i : 400 * 2 ** i;
+      if (isRateLimit(error)) console.error(`rpc 429, backing off ${wait}ms: ${describeError(error)}`);
+      await sleep(wait);
     }
   }
   throw last;
@@ -260,17 +263,40 @@ function shortError(error: unknown): string {
   return describeError(error).slice(0, 500);
 }
 
+function httpStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const status = (error as { status?: unknown }).status;
+  if (status === 429) return 429;
+  if (typeof status === "number") return status;
+  return null;
+}
+
 function describeError(error: unknown): string {
+  if (error instanceof BaseError) {
+    const parts = [error.shortMessage || error.message];
+    const status = httpStatus(error);
+    if (status) parts.push(`http ${status}`);
+    const url = (error as { url?: string }).url;
+    if (url) parts.push(url);
+    if (error.details) parts.push(String(error.details).slice(0, 300));
+    return parts.join(" | ").replace(/\s+/g, " ");
+  }
   if (!(error instanceof Error)) return String(error ?? "failed");
   const parts = [`${error.name}: ${error.message}`];
-  const status = (error as Error & { status?: number }).status;
-  if (status) parts.push(`status ${status}`);
+  const status = httpStatus(error);
+  if (status) parts.push(`http ${status}`);
   let cause: unknown = error.cause;
   for (let depth = 0; cause && depth < 4; depth++) {
     parts.push(cause instanceof Error ? `cause: ${cause.message}` : `cause: ${String(cause)}`);
     cause = cause instanceof Error ? cause.cause : undefined;
   }
   return parts.join(" | ").replace(/\s+/g, " ");
+}
+
+function isRateLimit(error: unknown): boolean {
+  if (httpStatus(error) === 429) return true;
+  const text = error instanceof Error ? error.message : String(error ?? "");
+  return text.includes("429");
 }
 
 function isRevert(error: unknown): boolean {
@@ -336,10 +362,12 @@ async function aggregate(c: PublicClient, calls: RpcCall[]): Promise<unknown[]> 
             args: [encoded],
           })) as ReadonlyArray<{ success: boolean; returnData: `0x${string}` }>;
         } catch (error) {
+          if (isRateLimit(error)) console.error(`rpc 429 on multicall of ${slice.length}: ${describeError(error)}`);
           if (attempt < 2) {
-            await sleep(400 * 2 ** attempt);
+            await sleep((isRateLimit(error) ? 1_500 : 400) * 2 ** attempt);
             continue;
           }
+          console.error(`multicall failed (${slice.length} calls): ${describeError(error)}`);
           if (slice.length === 1) {
             rpcFailures += 1;
             rpcSample ??= shortError(error);
@@ -397,13 +425,18 @@ async function readAllMeta(c: PublicClient, instruments: InstrumentRow[]) {
   const decoded = await aggregate(c, calls);
   for (const row of instruments) map.set(row.id, blank());
   calls.forEach((call, index) => {
-    const meta = map.get(call.id);
-    const value = decoded[index];
-    if (!meta || value == null) return;
-    if (call.field === "symbol" || call.field === "name") meta[call.field] = String(value);
-    else if (call.field === "decimals") meta.decimals = Number(value);
-    else if (call.field === "uiMultiplier") meta.uiMultiplier = value as bigint;
-    else meta.oraclePaused = Boolean(value);
+    try {
+      const meta = map.get(call.id);
+      const value = decoded[index];
+      if (!meta || value == null) return;
+      if (call.field === "symbol" || call.field === "name") meta[call.field] = String(value);
+      else if (call.field === "decimals") meta.decimals = Number(value);
+      else if (call.field === "uiMultiplier") meta.uiMultiplier = value as bigint;
+      else meta.oraclePaused = Boolean(value);
+    } catch (error) {
+      rpcFailures += 1;
+      rpcSample ??= shortError(error);
+    }
   });
   return map;
 }
@@ -429,16 +462,22 @@ async function readAllOracles(c: PublicClient, instruments: InstrumentRow[]) {
   }
   const decoded = await aggregate(c, calls);
   targets.forEach((row, index) => {
-    const round = decoded[index * 2] as [bigint, bigint, bigint, bigint, bigint] | null;
-    const onchainDecimals = decoded[index * 2 + 1];
-    const decimals = onchainDecimals == null ? row.feed_decimals : Number(onchainDecimals);
-    if (!round || decimals == null) {
+    try {
+      const round = decoded[index * 2] as [bigint, bigint, bigint, bigint, bigint] | null;
+      const onchainDecimals = decoded[index * 2 + 1];
+      const decimals = onchainDecimals == null ? row.feed_decimals : Number(onchainDecimals);
+      if (!round || decimals == null) {
+        map.set(row.id, null);
+        return;
+      }
+      const [roundId, answer, , updatedAt, answeredInRound] = round;
+      const price = decodeOraclePrice({ roundId, answer, updatedAt, answeredInRound, decimals });
+      map.set(row.id, price ? { ...price, decimals } : null);
+    } catch (error) {
+      rpcFailures += 1;
+      rpcSample ??= shortError(error);
       map.set(row.id, null);
-      return;
     }
-    const [roundId, answer, , updatedAt, answeredInRound] = round;
-    const price = decodeOraclePrice({ roundId, answer, updatedAt, answeredInRound, decimals });
-    map.set(row.id, price ? { ...price, decimals } : null);
   });
   return map;
 }
@@ -596,7 +635,9 @@ export async function runTick(): Promise<TickResult> {
   if (feedRows > 0 && oracleOk < feedRows) errors.push(`oracle: readable ${oracleOk}/${feedRows}`);
   if (rpcFailures > 0) errors.push(`rpc failures ${rpcFailures}: ${rpcSample ?? "unknown"}`);
 
-  const log = `tokens=${instruments.length} FULL=${counts.FULL} ORACLE_ONLY=${counts.ORACLE_ONLY} DEX_ONLY=${counts.DEX_ONLY} LISTED_ONLY=${counts.LISTED_ONLY} DEGRADED=${counts.DEGRADED} tick_ms=${tickMs}`;
+  const withFeed = instruments.filter((row) => row.chainlink_feed).length;
+  const withMarket = (counts.FULL ?? 0) + (counts.DEX_ONLY ?? 0);
+  const log = `tokens=${instruments.length} with_feed=${withFeed} with_market=${withMarket} FULL=${counts.FULL ?? 0} ORACLE_ONLY=${counts.ORACLE_ONLY ?? 0} DEX_ONLY=${counts.DEX_ONLY ?? 0} LISTED_ONLY=${counts.LISTED_ONLY ?? 0} DEGRADED=${counts.DEGRADED ?? 0} errors=${errors.length} tick_ms=${tickMs}`;
   console.log(log);
   if (errors.length) console.error(errors.slice(0, 12).join(" | "));
 
@@ -627,6 +668,7 @@ async function seedVenues() {
 async function upsertUniverse(assets: Asset[], now: Date) {
   const seen = new Set<string>();
   for (const asset of assets) {
+    try {
     const deployment = asset.deployments.find((d) => d.chainId === CHAIN_ID);
     if (!deployment) continue;
     const ticker = asset.tokenSymbol.toUpperCase();
@@ -668,6 +710,9 @@ async function upsertUniverse(assets: Asset[], now: Date) {
         asset.isin ?? null,
       ],
     );
+    } catch (error) {
+      console.error(`token ${asset.tokenSymbol}: ${shortError(error)}`);
+    }
   }
   if (seen.size > 0) {
     await q(
@@ -686,15 +731,19 @@ async function matchFeeds(feeds: Feed[]) {
   }
   const rows = await q<{ id: number; symbol: string }>(`SELECT id, symbol FROM instruments WHERE delisted_at IS NULL`);
   for (const row of rows) {
-    const feed = byTicker.get(row.symbol);
-    if (!feed) {
-      await q(`UPDATE instruments SET chainlink_feed = NULL, feed_decimals = NULL, feed_heartbeat_s = NULL WHERE id = $1`, [row.id]);
-      continue;
+    try {
+      const feed = byTicker.get(row.symbol);
+      if (!feed) {
+        await q(`UPDATE instruments SET chainlink_feed = NULL, feed_decimals = NULL, feed_heartbeat_s = NULL WHERE id = $1`, [row.id]);
+        continue;
+      }
+      await q(
+        `UPDATE instruments SET chainlink_feed = $2, feed_decimals = $3, feed_heartbeat_s = $4 WHERE id = $1`,
+        [row.id, getAddress(feed.proxyAddress), feed.decimals, feed.heartbeat],
+      );
+    } catch (error) {
+      console.error(`feed ${row.symbol}: ${shortError(error)}`);
     }
-    await q(
-      `UPDATE instruments SET chainlink_feed = $2, feed_decimals = $3, feed_heartbeat_s = $4 WHERE id = $1`,
-      [row.id, getAddress(feed.proxyAddress), feed.decimals, feed.heartbeat],
-    );
   }
 }
 
@@ -711,11 +760,15 @@ async function readTokenMeta(c: PublicClient, address: Address) {
 
 async function persistTokenMeta(rows: Map<number, Awaited<ReturnType<typeof readTokenMeta>>>) {
   for (const [id, meta] of rows) {
+    try {
     const multiplier = meta.uiMultiplier == null ? null : Number(meta.uiMultiplier) / 1e18;
     await q(
       `UPDATE instruments SET onchain_symbol = $2, onchain_name = $3, onchain_decimals = $4, ui_multiplier = $5, oracle_paused = $6 WHERE id = $1`,
       [id, meta.symbol, meta.name, meta.decimals, multiplier, meta.oraclePaused],
     );
+    } catch (error) {
+      console.error(`token meta ${id}: ${shortError(error)}`);
+    }
   }
 }
 
@@ -846,8 +899,11 @@ async function discoverAndSnapshot(
   const quoterAddress = getAddress(quoter);
   const factoryCode = await withRetry(() => c.getCode({ address: factoryAddress }));
   const quoterCode = await withRetry(() => c.getCode({ address: quoterAddress }));
-  if (!factoryCode || factoryCode === "0x") throw new Error("Uniswap V3 factory has no bytecode");
-  if (!quoterCode || quoterCode === "0x") throw new Error("QuoterV2 has no bytecode");
+  if (!factoryCode || factoryCode === "0x") throw new Error(`Uniswap V3 factory ${factoryAddress} has no bytecode`);
+  if (!quoterCode || quoterCode === "0x") throw new Error(`QuoterV2 ${quoterAddress} has no bytecode`);
+  const factoryBytes = (factoryCode.length - 2) / 2;
+  const quoterBytes = (quoterCode.length - 2) / 2;
+  console.log(`uniswap health factory ${factoryAddress} bytecode ${factoryBytes} quoter ${quoterAddress} bytecode ${quoterBytes} source ${UNISWAP_DEPLOYMENTS_URL}`);
 
   const quotes: QuoteToken[] = [];
   for (const candidate of QUOTE_CANDIDATES) {
@@ -913,20 +969,31 @@ async function discoverAndSnapshot(
   let cursor = 0;
   const snaps: PoolSnap[] = [];
   for (const pool of live) {
-    if (pool.quote.usd == null) {
+    const hasQuote = pool.quote.usd != null;
+    try {
+      if (!hasQuote) {
+        snaps.push(emptySnap(pool));
+        continue;
+      }
+      const slot0 = decoded[cursor] as readonly [bigint, ...unknown[]] | null;
+      const liquidity = decoded[cursor + 1] as bigint | null;
+      const stockBal = decoded[cursor + 2] as bigint | null;
+      const quoteBal = decoded[cursor + 3] as bigint | null;
+      snaps.push(priceSnap(pool, slot0?.[0] ?? null, liquidity, stockBal, quoteBal) ?? emptySnap(pool));
+    } catch (error) {
+      rpcFailures += 1;
+      rpcSample ??= shortError(error);
+      console.error(`pool ${pool.pool}: ${describeError(error)}`);
       snaps.push(emptySnap(pool));
-      continue;
+    } finally {
+      if (hasQuote) cursor += 4;
     }
-    const slot0 = decoded[cursor] as readonly [bigint, ...unknown[]] | null;
-    const liquidity = decoded[cursor + 1] as bigint | null;
-    const stockBal = decoded[cursor + 2] as bigint | null;
-    const quoteBal = decoded[cursor + 3] as bigint | null;
-    cursor += 4;
-    snaps.push(priceSnap(pool, slot0?.[0] ?? null, liquidity, stockBal, quoteBal) ?? emptySnap(pool));
   }
   const priced = snaps.filter((snap) => snap.priceUsd != null).length;
   console.log(`priced pools ${priced}/${snaps.length}`);
-  if (live.length > 0 && priced === 0) throw new Error(`state reads priced 0/${live.length} pools`);
+  if (live.length > 0 && priced === 0) {
+    throw new Error(`state reads priced 0/${live.length} pools; rpcFailures=${rpcFailures}; ${rpcSample ?? "no rpc error captured"}`);
+  }
 
   console.log("quoting primaries");
   await quotePrimaries(c, quoterAddress, snaps, quotes);
@@ -1106,6 +1173,7 @@ async function syncCorporateActions(instruments: InstrumentRow[]) {
     .parse(await withRetry(() => fetchJson(ACTIONS_URL)));
   const bySymbol = new Map(instruments.map((row) => [row.symbol, row.id]));
   for (const action of body.corpActions) {
+    try {
     const instrumentId = action.tokenSymbol ? bySymbol.get(action.tokenSymbol.toUpperCase()) ?? null : null;
     const date = action.processDate
       ? `${action.processDate.year}-${String(action.processDate.month).padStart(2, "0")}-${String(action.processDate.day).padStart(2, "0")}`
@@ -1116,18 +1184,25 @@ async function syncCorporateActions(instruments: InstrumentRow[]) {
        ON CONFLICT (id) DO UPDATE SET instrument_id = EXCLUDED.instrument_id, type = EXCLUDED.type, status = EXCLUDED.status, process_date = EXCLUDED.process_date, details = EXCLUDED.details`,
       [action.id, instrumentId, action.type ?? null, action.status ?? null, date, JSON.stringify(action.details ?? null)],
     );
+    } catch (error) {
+      console.error(`corporate action ${action.id}: ${shortError(error)}`);
+    }
   }
 }
 
 async function ensureArcusLinks(instruments: InstrumentRow[]) {
   for (const row of instruments) {
-    await q(
-      `INSERT INTO markets (venue_id, instrument_id, quote_symbol, quote_address, pool_address, external_symbol, deeplink_url)
-       VALUES ('arcus-spot', $1, 'USDG', NULL, '', $2, $3)
-       ON CONFLICT (venue_id, instrument_id, quote_symbol, pool_address)
-       DO UPDATE SET deeplink_url = EXCLUDED.deeplink_url`,
-      [row.id, row.symbol, `https://app.arcus.xyz/trade/spot/${row.symbol}`],
-    );
+    try {
+      await q(
+        `INSERT INTO markets (venue_id, instrument_id, quote_symbol, quote_address, pool_address, external_symbol, deeplink_url)
+         VALUES ('arcus-spot', $1, 'USDG', NULL, '', $2, $3)
+         ON CONFLICT (venue_id, instrument_id, quote_symbol, pool_address)
+         DO UPDATE SET deeplink_url = EXCLUDED.deeplink_url`,
+        [row.id, row.symbol, `https://app.arcus.xyz/trade/spot/${row.symbol}`],
+      );
+    } catch (error) {
+      console.error(`link ${row.symbol}: ${shortError(error)}`);
+    }
   }
 }
 
