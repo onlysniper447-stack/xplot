@@ -1,4 +1,4 @@
-import { alertCopy, type OracleState, type SessionName, type Tier } from "./engines";
+import { ADAPTER_DOWN_NOTE, alertCopy, type OracleState, type SessionName, type Tier } from "./engines";
 import { formatPct } from "./format";
 import { sessionLabel } from "./session";
 
@@ -62,6 +62,8 @@ export function verdict(input: {
   return `${sessionLabel(input.session, input.sessionSource)} DEX is ${formatPct(input.spreadPct)} from the oracle.`;
 }
 
+export const SPREAD_NEEDS_BOTH = "Spread needs a spot price and an oracle price";
+
 const REASON_PLAIN: Record<string, string> = {
   NO_FEED: "No Chainlink feed is listed for this token.",
   FEED_STALE: "The oracle print is stale.",
@@ -73,7 +75,35 @@ const REASON_PLAIN: Record<string, string> = {
   MULTIPLIER_MISSING: "The multiplier is missing.",
   MULTIPLIER_MISMATCH: "The multiplier does not match the registry.",
   SYMBOL_MISMATCH: "The symbol does not match the registry.",
+  DEX_UNAVAILABLE: ADAPTER_DOWN_NOTE,
 };
+
+/** Why a headline number is missing. Adapter-down copy wins over the no-pool line. */
+export function dashReason(input: {
+  adapterDown: boolean;
+  reasons: string[];
+  tier: Tier;
+  kind: "dex" | "spread" | "executable" | "confidence";
+}): string {
+  if (dexUnavailable(input.adapterDown, input.reasons, input.tier)) return ADAPTER_DOWN_NOTE;
+  if (input.kind === "spread" || input.kind === "executable") return SPREAD_NEEDS_BOTH;
+  if (input.reasons.includes("POOL_TVL_BELOW_MIN")) return REASON_PLAIN.POOL_TVL_BELOW_MIN;
+  if (input.reasons.includes("NO_FEED")) return REASON_PLAIN.NO_FEED;
+  return REASON_PLAIN.NO_POOL;
+}
+
+export function equityReason(adapterDown: boolean, reasons: string[], tier: Tier): string | null {
+  if (dexUnavailable(adapterDown, reasons, tier)) return ADAPTER_DOWN_NOTE;
+  for (const code of reasons) {
+    const plain = REASON_PLAIN[code];
+    if (plain) return plain;
+  }
+  return null;
+}
+
+function dexUnavailable(adapterDown: boolean, reasons: string[], tier: Tier): boolean {
+  return reasons.includes("DEX_UNAVAILABLE") || (adapterDown && tier !== "LISTED_ONLY");
+}
 
 export function reasonPlain(code: string): string {
   return REASON_PLAIN[code] ?? "A coverage check failed.";
@@ -101,8 +131,9 @@ export function qualityNotice(input: {
   }
   if (input.reasons.includes("INACTIVE")) return "This token is inactive.";
   if (input.tier === "LISTED_ONLY") return "No live price is available for this token.";
-  if (input.adapterDown && input.oraclePrice != null) return "DEX prices are temporarily unavailable. Showing oracle price.";
-  if (input.adapterDown) return "DEX prices are temporarily unavailable.";
+  const dexDown = input.adapterDown || input.reasons.includes("DEX_UNAVAILABLE");
+  if (dexDown && input.oraclePrice != null) return "DEX prices are temporarily unavailable. Showing oracle price.";
+  if (dexDown) return "DEX prices are temporarily unavailable.";
   if (input.dexPrice == null && input.oraclePrice != null) return "No DEX market is available. Showing the oracle price.";
   if (input.tier === "DEX_ONLY") return "No oracle reference. Spread is unavailable.";
   if (input.reasons.includes("POOL_TVL_BELOW_MIN")) return "Pools exist, but none meet the liquidity minimum.";

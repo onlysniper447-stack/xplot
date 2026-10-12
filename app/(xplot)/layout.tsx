@@ -21,9 +21,11 @@ export default async function XplotLayout({ children }: { children: React.ReactN
   try {
     const env = await envelope();
     market = env.market;
-    const { counts } = await coverageCounts();
+    const { counts, rows } = await coverageCounts();
     const age = env.ages.collector_s;
-    coverage = `${counts.listed} listed · ${counts.FULL} live · ${counts.ORACLE_ONLY} oracle-only · ${counts.DEGRADED} degraded`;
+    const statusCounts = { live: 0, stale: 0, degraded: 0, no_data: 0 };
+    for (const row of rows) statusCounts[row.dataStatus] += 1;
+    coverage = `${counts.listed} listed · ${statusCounts.live} live · ${statusCounts.stale} stale · ${statusCounts.degraded} degraded · ${statusCounts.no_data} no data`;
     if (age != null) coverage += ` · collector ${formatAge(age)} ago`;
     if (env.collector?.uniswapDown) adapterBanner = ADAPTER_DOWN_NOTE;
     stallBanner = env.stallMessage;

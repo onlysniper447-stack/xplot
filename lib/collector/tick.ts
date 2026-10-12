@@ -11,6 +11,7 @@ import {
 } from "viem";
 import { z } from "zod";
 import { getDb, num, q } from "../db/client";
+import { readValue, rpcReadFailure, type RpcRead } from "./rpc-read";
 import {
   aggregateSpot,
   alertThresholdPct,
@@ -25,6 +26,7 @@ import {
   priceOfToken0InToken1,
   spreadPct,
   tokenEquivalent,
+  updatedWithinPoolWindow,
   type OracleState,
   type SessionName,
 } from "../xplot/engines";
@@ -299,22 +301,33 @@ function isRevert(error: unknown): boolean {
   return error instanceof BaseError && error.walk((item) => item instanceof ContractFunctionRevertedError) != null;
 }
 
-async function readOrNull<T>(fn: () => Promise<T>): Promise<T | null> {
+/** Short adapter error. Leaves the HTML body out of the log line. */
+function adapterError(error: unknown): string {
+  if (error instanceof BaseError) {
+    const status = httpStatus(error);
+    const head = (error.shortMessage || error.message).replace(/\s+/g, " ").trim();
+    return (status ? `${head} http ${status}` : head).slice(0, 180);
+  }
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? "failed");
+  return message.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+async function readOrNull<T>(fn: () => Promise<T>): Promise<RpcRead<T>> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return await fn();
+      return { ok: true, value: await fn() };
     } catch (error) {
-      if (isRevert(error) || attempt === 1) {
-        if (!isRevert(error)) {
-          rpcFailures += 1;
-          rpcSample ??= shortError(error);
-        }
-        return null;
+      if (isRevert(error)) return { ok: false, reason: "contract revert" };
+      if (attempt === 1) {
+        rpcFailures += 1;
+        const failed = rpcReadFailure(error);
+        rpcSample ??= failed.reason;
+        return failed;
       }
       await sleep(300 * 2 ** attempt);
     }
   }
-  return null;
+  return { ok: false, reason: "RPC timeout" };
 }
 
 type RpcCall = {
@@ -329,7 +342,7 @@ let multicallReady: boolean | null = null;
 async function ensureMulticall(c: PublicClient): Promise<boolean> {
   if (multicallReady != null) return multicallReady;
   const code = await readOrNull(() => c.getCode({ address: MULTICALL3 }));
-  multicallReady = Boolean(code && code !== "0x");
+  multicallReady = code.ok && Boolean(code.value && code.value !== "0x");
   return multicallReady;
 }
 
@@ -439,14 +452,22 @@ async function readAllMeta(c: PublicClient, instruments: InstrumentRow[]) {
 
 async function readAllOracles(c: PublicClient, instruments: InstrumentRow[]) {
   const map = new Map<number, { price: number; updatedAt: Date; decimals: number } | null>();
+  const failed = new Set<number>();
   const targets = instruments.filter((row) => row.chainlink_feed);
   if (!(await ensureMulticall(c))) {
     const reads = await mapPool(targets, 2, async (row) => {
       const read = await readFeed(c, getAddress(row.chainlink_feed!), row.feed_decimals);
       return [row.id, read] as const;
     });
-    for (const [id, read] of reads) map.set(id, read);
-    return map;
+    for (const [id, read] of reads) {
+      if (!read.ok) {
+        map.set(id, null);
+        failed.add(id);
+        continue;
+      }
+      map.set(id, read.value);
+    }
+    return { values: map, failed };
   }
   const calls: RpcCall[] = [];
   for (const row of targets) {
@@ -464,6 +485,7 @@ async function readAllOracles(c: PublicClient, instruments: InstrumentRow[]) {
       const decimals = onchainDecimals == null ? row.feed_decimals : Number(onchainDecimals);
       if (!round || decimals == null) {
         map.set(row.id, null);
+        if (!round) failed.add(row.id);
         return;
       }
       const [roundId, answer, , updatedAt, answeredInRound] = round;
@@ -473,9 +495,10 @@ async function readAllOracles(c: PublicClient, instruments: InstrumentRow[]) {
       rpcFailures += 1;
       rpcSample ??= shortError(error);
       map.set(row.id, null);
+      failed.add(row.id);
     }
   });
-  return map;
+  return { values: map, failed };
 }
 
 export async function runTick(): Promise<TickResult> {
@@ -528,29 +551,14 @@ export async function runTick(): Promise<TickResult> {
   }
 
   const oracleById = new Map<number, { price: number; updatedAt: Date; decimals: number } | null>();
+  const oracleFailed = new Set<number>();
   try {
     const reads = await readAllOracles(c, instruments);
-    for (const [id, read] of reads) oracleById.set(id, read);
+    for (const [id, read] of reads.values) oracleById.set(id, read);
+    for (const id of reads.failed) oracleFailed.add(id);
     console.log(`oracle ${[...oracleById.values()].filter((read) => read != null).length}`);
   } catch (error) {
     errors.push(`oracle: ${shortError(error)}`);
-  }
-
-  try {
-    const missing = instruments.filter((row) => row.chainlink_feed && oracleById.get(row.id) == null);
-    if (missing.length) {
-      const prior = await lastOracleByInstrument();
-      let filled = 0;
-      for (const row of missing) {
-        const prev = prior.get(row.id);
-        if (!prev) continue;
-        oracleById.set(row.id, { ...prev, decimals: row.feed_decimals ?? 8 });
-        filled += 1;
-      }
-      if (filled) console.log(`oracle last-good ${filled}`);
-    }
-  } catch (error) {
-    errors.push(`oracle last-good: ${shortError(error)}`);
   }
 
   const peg = await readPegs(c, feeds);
@@ -571,7 +579,7 @@ export async function runTick(): Promise<TickResult> {
   }
   if (uniswapError) {
     uniswapDown = true;
-    const detail = describeError(uniswapError);
+    const detail = adapterError(uniswapError);
     console.error(`uniswap adapter down: ${detail}`);
     errors.push(`uniswap: ${detail}`);
     try {
@@ -607,7 +615,7 @@ export async function runTick(): Promise<TickResult> {
 
   for (const row of instruments) {
     try {
-      const tier = await writeInstrument({ row, now: ts, chainMeta: chainMeta.get(row.id) ?? null, oracle: oracleById.get(row.id) ?? null, pools, uniswapDown, quote: quotes.get(row.symbol) ?? null, peg });
+      const tier = await writeInstrument({ row, now: ts, chainMeta: chainMeta.get(row.id) ?? null, oracle: oracleById.get(row.id) ?? null, oracleFailed: oracleFailed.has(row.id), pools, uniswapDown, quote: quotes.get(row.symbol) ?? null, peg });
       counts[tier] = (counts[tier] ?? 0) + 1;
     } catch (error) {
       counts.DEGRADED += 1;
@@ -751,7 +759,13 @@ async function readTokenMeta(c: PublicClient, address: Address) {
     readOrNull(() => c.readContract({ address, abi: multiplierAbi, functionName: "uiMultiplier" })),
     readOrNull(() => c.readContract({ address, abi: multiplierAbi, functionName: "oraclePaused" })),
   ]);
-  return { symbol, name, decimals, uiMultiplier, oraclePaused };
+  return {
+    symbol: readValue(symbol),
+    name: readValue(name),
+    decimals: readValue(decimals),
+    uiMultiplier: readValue(uiMultiplier),
+    oraclePaused: readValue(oraclePaused),
+  };
 }
 
 async function persistTokenMeta(rows: Map<number, Awaited<ReturnType<typeof readTokenMeta>>>) {
@@ -768,12 +782,17 @@ async function persistTokenMeta(rows: Map<number, Awaited<ReturnType<typeof read
   }
 }
 
-async function readFeed(c: PublicClient, address: Address, fallbackDecimals?: number | null) {
+async function readFeed(
+  c: PublicClient,
+  address: Address,
+  fallbackDecimals?: number | null,
+): Promise<RpcRead<{ price: number; updatedAt: Date; decimals: number } | null>> {
   const round = await readOrNull(() => c.readContract({ address, abi: feedAbi, functionName: "latestRoundData" }));
+  if (!round.ok) return round;
   const decimals = await readOrNull(() => c.readContract({ address, abi: feedAbi, functionName: "decimals" }));
-  const resolved = decimals == null ? fallbackDecimals : Number(decimals);
-  if (!round || resolved == null) return null;
-  const [roundId, answer, , updatedAt, answeredInRound] = round;
+  const resolved = decimals.ok && decimals.value != null ? Number(decimals.value) : fallbackDecimals ?? null;
+  if (round.value == null || resolved == null) return { ok: true, value: null };
+  const [roundId, answer, , updatedAt, answeredInRound] = round.value;
   const decoded = decodeOraclePrice({
     roundId,
     answer,
@@ -781,19 +800,21 @@ async function readFeed(c: PublicClient, address: Address, fallbackDecimals?: nu
     answeredInRound,
     decimals: resolved,
   });
-  return decoded ? { ...decoded, decimals: resolved } : null;
+  return { ok: true, value: decoded ? { ...decoded, decimals: resolved } : null };
 }
 
 async function readPegs(c: PublicClient, feeds: Feed[]) {
   const find = (name: string) => feeds.find((feed) => feed.name.toLowerCase() === name.toLowerCase());
   const usdg = find("USDG / USD");
   const eth = find("ETH / USD");
-  const usdgRead = usdg ? await readFeed(c, getAddress(usdg.proxyAddress), usdg.decimals) : null;
-  const ethRead = eth ? await readFeed(c, getAddress(eth.proxyAddress), eth.decimals) : null;
+  const usdgRead = usdg ? await readFeed(c, getAddress(usdg.proxyAddress), usdg.decimals) : { ok: true as const, value: null };
+  const ethRead = eth ? await readFeed(c, getAddress(eth.proxyAddress), eth.decimals) : { ok: true as const, value: null };
+  const usdgPrice = usdgRead.ok ? usdgRead.value : null;
+  const ethPrice = ethRead.ok ? ethRead.value : null;
   return {
-    usdgUsd: usdgRead?.price ?? null,
-    ethUsd: ethRead?.price ?? null,
-    usdgOffPeg: usdgRead != null && Math.abs(usdgRead.price - 1) > 0.005,
+    usdgUsd: usdgPrice?.price ?? null,
+    ethUsd: ethPrice?.price ?? null,
+    usdgOffPeg: usdgPrice != null && Math.abs(usdgPrice.price - 1) > 0.005,
   };
 }
 
@@ -812,22 +833,6 @@ type PoolSnap = {
   /** When set, eligibility uses this print time. A live read leaves it unset. */
   asOf?: string | null;
 };
-
-async function lastOracleByInstrument() {
-  const rows = await q<{ instrument_id: number; price: string; oracle_updated_at: string }>(
-    `SELECT DISTINCT ON (instrument_id) instrument_id, price::text, oracle_updated_at::text
-     FROM oracle_snapshots
-     ORDER BY instrument_id, ts DESC`,
-  );
-  const map = new Map<number, { price: number; updatedAt: Date }>();
-  for (const row of rows) {
-    const price = num(row.price);
-    const updatedAt = new Date(row.oracle_updated_at);
-    if (price == null || Number.isNaN(updatedAt.getTime())) continue;
-    map.set(row.instrument_id, { price, updatedAt });
-  }
-  return map;
-}
 
 async function lastPricedPools(): Promise<PoolSnap[]> {
   const rows = await q<{
@@ -880,6 +885,15 @@ type LivePool = {
   token1: Address;
 };
 
+async function deploymentCode(c: PublicClient, address: Address) {
+  try {
+    return await withRetry(() => c.getCode({ address }));
+  } catch (error) {
+    console.error(`uniswap adapter down ${address}: ${adapterError(error)}`);
+    throw error;
+  }
+}
+
 async function discoverAndSnapshot(
   c: PublicClient,
   instruments: InstrumentRow[],
@@ -893,8 +907,8 @@ async function discoverAndSnapshot(
   if (!factory || !quoter) throw new Error("Uniswap deployments JSON has no V3 factory or QuoterV2");
   const factoryAddress = getAddress(factory);
   const quoterAddress = getAddress(quoter);
-  const factoryCode = await withRetry(() => c.getCode({ address: factoryAddress }));
-  const quoterCode = await withRetry(() => c.getCode({ address: quoterAddress }));
+  const factoryCode = await deploymentCode(c, factoryAddress);
+  const quoterCode = await deploymentCode(c, quoterAddress);
   if (!factoryCode || factoryCode === "0x") throw new Error(`Uniswap V3 factory ${factoryAddress} has no bytecode`);
   if (!quoterCode || quoterCode === "0x") throw new Error(`QuoterV2 ${quoterAddress} has no bytecode`);
   const factoryBytes = (factoryCode.length - 2) / 2;
@@ -906,9 +920,9 @@ async function discoverAndSnapshot(
     const address = getAddress(candidate.address);
     const symbol = await readOrNull(() => c.readContract({ address, abi: erc20Abi, functionName: "symbol" }));
     const decimals = await readOrNull(() => c.readContract({ address, abi: erc20Abi, functionName: "decimals" }));
-    if (symbol !== candidate.symbol || decimals == null) continue;
+    if (!symbol.ok || symbol.value !== candidate.symbol || !decimals.ok || decimals.value == null) continue;
     const usd = candidate.symbol === "USDG" ? peg.usdgUsd : candidate.symbol === "WETH" ? peg.ethUsd : null;
-    quotes.push({ symbol: candidate.symbol, address, decimals: Number(decimals), usd });
+    quotes.push({ symbol: candidate.symbol, address, decimals: Number(decimals.value), usd });
   }
   if (quotes.length === 0) throw new Error("No quote token passed symbol() verification");
 
@@ -1202,6 +1216,7 @@ async function writeInstrument(input: {
   now: Date;
   chainMeta: Awaited<ReturnType<typeof readTokenMeta>> | null;
   oracle: { price: number; updatedAt: Date } | null;
+  oracleFailed: boolean;
   pools: PoolSnap[];
   uniswapDown: boolean;
   quote: z.infer<typeof QuoteSchema> | null;
@@ -1244,7 +1259,7 @@ async function writeInstrument(input: {
       priceUsdPerToken: pool.priceUsd,
       tvlUsd: pool.tvlUsd,
       depth1pctUsd: pool.depthUsd,
-      updatedWithinWindow: pool.asOf == null || now.getTime() - new Date(pool.asOf).getTime() <= 5 * 60 * 1000,
+      updatedWithinWindow: updatedWithinPoolWindow(pool.asOf, now),
     })),
   );
   const classified = classifyTier({
@@ -1306,7 +1321,7 @@ async function writeInstrument(input: {
     }
   }
 
-  if (input.oracle) {
+  if (input.oracle && !input.oracleFailed) {
     await q(
       `INSERT INTO oracle_snapshots (instrument_id, ts, price, oracle_updated_at, age_s, oracle_state)
        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
@@ -1331,30 +1346,32 @@ async function writeInstrument(input: {
     );
   }
 
-  await q(
-    `INSERT INTO deviations (
-       instrument_id, ts, dex_price, oracle_price, oracle_age_s, spread_pct, executable_spread_1k_pct,
-       session, session_source, oracle_state, liquidity_confidence, venue_dispersion_pct, alert, underlying_price, threshold_pct
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-     ON CONFLICT DO NOTHING`,
-    [
-      row.id,
-      now.toISOString(),
-      agg.primary,
-      input.oracle?.price ?? null,
-      ageS,
-      spread,
-      executable,
-      session.session,
-      session.source,
-      state,
-      liquidityConfidence(agg.depth1pctUsd),
-      agg.dispersionPct,
-      alert,
-      input.oracle && multiplier ? input.oracle.price / multiplier : null,
-      threshold,
-    ],
-  );
+  if (!input.oracleFailed) {
+    await q(
+      `INSERT INTO deviations (
+         instrument_id, ts, dex_price, oracle_price, oracle_age_s, spread_pct, executable_spread_1k_pct,
+         session, session_source, oracle_state, liquidity_confidence, venue_dispersion_pct, alert, underlying_price, threshold_pct
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT DO NOTHING`,
+      [
+        row.id,
+        now.toISOString(),
+        agg.primary,
+        input.oracle?.price ?? null,
+        ageS,
+        spread,
+        executable,
+        session.session,
+        session.source,
+        state,
+        liquidityConfidence(agg.depth1pctUsd),
+        agg.dispersionPct,
+        alert,
+        input.oracle && multiplier ? input.oracle.price / multiplier : null,
+        threshold,
+      ],
+    );
+  }
 
   let tier = classified.tier;
   if ((reasons.includes("MULTIPLIER_MISMATCH") || reasons.includes("SYMBOL_MISMATCH")) && tier !== "LISTED_ONLY") {

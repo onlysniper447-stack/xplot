@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readValue, rpcReadFailure } from "../collector/rpc-read";
 import {
   aggregateSpot,
   alertThresholdPct,
@@ -8,7 +9,9 @@ import {
   collectorStallCopy,
   constantProductImpactBps,
   decodeOraclePrice,
+  deriveStatus,
   oracleAgeSeconds,
+  oracleFreshnessLabel,
   executableSpreadPct,
   liquidityConfidence,
   oracleState,
@@ -17,6 +20,7 @@ import {
   spreadPct,
   tokenEquivalent,
   underlyingFromToken,
+  updatedWithinPoolWindow,
 } from "./engines";
 import { HOLIDAYS, EARLY_CLOSE, resolveSession } from "./session";
 
@@ -102,14 +106,76 @@ describe("tiers", () => {
     assert.equal(listed.tier, "LISTED_ONLY");
     assert.equal(listed.reasons.includes("NO_FEED"), true);
   });
-  it("keeps the last good tier when the adapter is down", () => {
+  it("marks affected tokens DEGRADED with DEX_UNAVAILABLE when the adapter is down", () => {
     const down = classifyTier({ ...base, eligibleSpot: 0, adapterDown: true });
-    assert.equal(down.tier, "ORACLE_ONLY");
+    assert.equal(down.tier, "DEGRADED");
+    assert.equal(down.reasons.includes("DEX_UNAVAILABLE"), true);
     assert.equal(down.reasons.includes("ADAPTER_DOWN:uniswap"), false);
     assert.equal(down.reasons.includes("NO_POOL"), false);
-    assert.equal(classifyTier({ ...base, adapterDown: true }).tier, "FULL");
+    const full = classifyTier({ ...base, adapterDown: true });
+    assert.equal(full.tier, "DEGRADED");
+    assert.equal(full.reasons.includes("DEX_UNAVAILABLE"), true);
+    const dexOnly = classifyTier({ ...base, hasFeed: false, feedReadable: false, oracle: "unread", adapterDown: true });
+    assert.equal(dexOnly.tier, "DEGRADED");
+    assert.equal(dexOnly.reasons.includes("DEX_UNAVAILABLE"), true);
     const noFeed = classifyTier({ ...base, hasFeed: false, feedReadable: false, oracle: "unread", eligibleSpot: 0, adapterDown: true });
     assert.equal(noFeed.tier, "LISTED_ONLY");
+    assert.equal(noFeed.reasons.includes("DEX_UNAVAILABLE"), false);
+  });
+  it("returns a failed result with a reason on RPC timeout", () => {
+    const timeout = new Error("The operation was aborted");
+    timeout.name = "AbortError";
+    const failed = rpcReadFailure(timeout);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.reason, "RPC timeout");
+    assert.equal(readValue(failed), null);
+  });
+  it("never shows a failed DEX read as live", () => {
+    const failed = classifyTier({ ...base, adapterDown: true });
+    const status = deriveStatus({ collectorAgeS: 30, adapterDown: true, tier: failed.tier, hasPrint: true });
+    assert.equal(failed.tier, "DEGRADED");
+    assert.equal(status, "degraded");
+    assert.notEqual(status, "live");
+  });
+  it("labels a stalled collector stale instead of live", () => {
+    const at = "2026-10-12T16:25:00Z";
+    const status = deriveStatus({ collectorAgeS: 181, adapterDown: true, tier: "DEGRADED", hasPrint: true });
+    assert.equal(status, "stale");
+    const label = oracleFreshnessLabel({ dataStatus: status, oracleState: "live", collectorAt: at });
+    assert.equal(label, "stale · last 2026-10-12 16:25 UTC");
+    assert.equal(label.includes("live"), false);
+    assert.equal(deriveStatus({ collectorAgeS: 180, adapterDown: false, tier: "ORACLE_ONLY", hasPrint: true }), "live");
+  });
+  it("uses the no-liquidity reason when the collector is fresh and the adapter is up", () => {
+    const fresh = classifyTier({ ...base, eligibleSpot: 0, adapterDown: false });
+    assert.equal(fresh.tier, "ORACLE_ONLY");
+    assert.equal(fresh.reasons.includes("NO_POOL"), true);
+    assert.equal(fresh.reasons.includes("DEX_UNAVAILABLE"), false);
+    assert.equal(deriveStatus({ collectorAgeS: 30, adapterDown: false, tier: fresh.tier, hasPrint: true }), "live");
+  });
+  it("keeps a pool inside the five-minute window and drops an older one", () => {
+    const now = new Date("2026-10-12T16:30:00.000Z");
+    assert.equal(updatedWithinPoolWindow("2026-10-12T16:25:00.000Z", now), true);
+    assert.equal(updatedWithinPoolWindow("2026-10-12T16:24:59.999Z", now), false);
+    assert.equal(updatedWithinPoolWindow(null, now), true);
+    const agg = aggregateSpot([
+      {
+        lane: "spot",
+        priceUsdPerToken: 10,
+        tvlUsd: 50_000,
+        depth1pctUsd: 20_000,
+        updatedWithinWindow: updatedWithinPoolWindow("2026-10-12T16:26:00.000Z", now),
+      },
+      {
+        lane: "spot",
+        priceUsdPerToken: 12,
+        tvlUsd: 80_000,
+        depth1pctUsd: 40_000,
+        updatedWithinWindow: updatedWithinPoolWindow("2026-10-12T16:20:00.000Z", now),
+      },
+    ]);
+    assert.equal(agg.eligibleCount, 1);
+    assert.equal(agg.primary, 10);
   });
   it("ages an oracle from its updatedAt and flags a stalled collector after 3 minutes", () => {
     const now = new Date("2026-10-12T15:00:00Z");

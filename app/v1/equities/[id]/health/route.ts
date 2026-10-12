@@ -22,6 +22,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       alert,
       coverage_tier: equity.tier,
       coverage_reasons: equity.reasons,
+      status: equity.dataStatus,
+      reason: equity.reason,
       oracle_vs_reference_pct: reference?.oracleVsReferencePct ?? null,
       multiplier: equity.multiplier,
       pending_multiplier: equity.pendingMultiplier,

@@ -8,7 +8,7 @@ import { IssuerNote } from "@/components/xplot/equity/issuer-note";
 import { EquityTabs } from "@/components/xplot/equity/tabs";
 import { VenuesTable, type VenueRow } from "@/components/xplot/equity/venues-table";
 import { PriceChart } from "@/components/xplot/price-chart";
-import { headerVerdict, qualityNotice, reasonPlain, verdict, whyGap } from "@/lib/xplot/copy";
+import { dashReason, headerVerdict, qualityNotice, reasonPlain, verdict, whyGap } from "@/lib/xplot/copy";
 import { liquidityConfidence } from "@/lib/xplot/engines";
 import { formatBps, formatCompactUsd, formatPct, formatUsd } from "@/lib/xplot/format";
 import { actionsFor, alertFor, deviationSeries, envelope, getEquity, instrumentIdFor, marketsFor, referenceFor } from "@/lib/xplot/read";
@@ -66,6 +66,10 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
     reasons: equity.reasons,
     adapterDown,
   });
+  const missing = (kind: "dex" | "spread" | "executable" | "confidence") =>
+    dashReason({ adapterDown, reasons: equity.reasons, tier: equity.tier, kind });
+  const sessionText = sessionLabel(equity.session, equity.sessionSource);
+  const sessionValue = equity.dataStatus === "stale" && env.stallMessage ? `${sessionText} ${env.stallMessage}` : sessionText;
   const venueRows: VenueRow[] = spot.map((market) => {
     const empty = [market.priceUsd, market.tvlUsd, market.depthUsd, market.impact1k, market.impact10k, market.impact50k].every((value) => value == null);
     const quote = market.quoteSymbol ?? "—";
@@ -122,15 +126,15 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
 
       <section className="xplot-panel xplot-area-hero" aria-label="Prices">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
+          <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" reason={equity.dexPrice == null ? missing("dex") : null} />
           <div title="Chainlink price per token, with the age of that print">
             <p className="text-xs" style={{ color: "var(--muted)" }}>Oracle price</p>
             <div className="mt-1">
               <OracleCell row={equity} />
             </div>
           </div>
-          <Price label="Spread" value={formatPct(equity.spreadPct)} hint="Per token versus per token" />
-          <Price label="Executable spread" value={formatPct(equity.executableSpread1kPct)} hint="Spread after a $1k quote impact" />
+          <Price label="Spread" value={formatPct(equity.spreadPct)} hint="Per token versus per token" reason={equity.spreadPct == null ? missing("spread") : null} />
+          <Price label="Executable spread" value={formatPct(equity.executableSpread1kPct)} hint="Spread after a $1k quote impact" reason={equity.executableSpread1kPct == null ? missing("executable") : null} />
         </div>
       </section>
 
@@ -281,15 +285,15 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
       <aside className="xplot-panel xplot-area-stats" aria-label="Key stats">
         <h2 className="text-sm font-medium">Key stats</h2>
         <dl className="mt-3 space-y-3 text-sm">
-          <Stat label="DEX price" value={formatUsd(equity.dexPrice)} />
+          <Stat label="DEX price" value={formatUsd(equity.dexPrice)} reason={equity.dexPrice == null ? missing("dex") : null} />
           <div>
             <dt style={{ color: "var(--muted)" }}>Oracle price</dt>
             <dd className="mt-1"><OracleCell row={equity} /></dd>
           </div>
-          <Stat label="Spread" value={formatPct(equity.spreadPct)} />
-          <Stat label="Executable spread" value={formatPct(equity.executableSpread1kPct)} />
-          <Stat label="Liquidity confidence" value={equity.liquidityConfidence ?? "—"} />
-          <Stat label="Session" value={sessionLabel(equity.session, equity.sessionSource)} />
+          <Stat label="Spread" value={formatPct(equity.spreadPct)} reason={equity.spreadPct == null ? missing("spread") : null} />
+          <Stat label="Executable spread" value={formatPct(equity.executableSpread1kPct)} reason={equity.executableSpread1kPct == null ? missing("executable") : null} />
+          <Stat label="Liquidity confidence" value={equity.liquidityConfidence ?? "—"} reason={equity.liquidityConfidence == null ? missing("confidence") : null} />
+          <Stat label="Session" value={sessionValue} />
           <div>
             <dt style={{ color: "var(--muted)" }}>Last updated</dt>
             <dd className="mt-1"><Freshness seconds={env.ages.collector_s} /></dd>
@@ -300,20 +304,22 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, reason }: { label: string; value: string; reason?: string | null }) {
   return (
     <div>
       <dt style={{ color: "var(--muted)" }}>{label}</dt>
       <dd className="mono mt-1">{value}</dd>
+      {value === "—" && reason ? <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>{reason}</p> : null}
     </div>
   );
 }
 
-function Price({ label, value, hint }: { label: string; value: string; hint: string }) {
+function Price({ label, value, hint, reason }: { label: string; value: string; hint: string; reason?: string | null }) {
   return (
     <div title={hint}>
       <p className="text-xs" style={{ color: "var(--muted)" }}>{label}</p>
       <p className="mono mt-1 text-lg" style={{ color: "var(--text)" }}>{value}</p>
+      {value === "—" && reason ? <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>{reason}</p> : null}
     </div>
   );
 }

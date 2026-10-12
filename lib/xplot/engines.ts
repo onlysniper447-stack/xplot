@@ -156,7 +156,7 @@ export type TierInput = {
   feedReadable: boolean;
   oracle: OracleState;
   eligibleSpot: number;
-  /** The pool scan did not finish. Suppresses NO_POOL. Never changes the tier. */
+  /** The pool scan did not finish. Suppresses NO_POOL. FULL, ORACLE_ONLY, and DEX_ONLY become DEGRADED. */
   adapterDown: boolean;
   decimalsMismatch: boolean;
   multiplierMissing: boolean;
@@ -179,6 +179,54 @@ export function oracleAgeSeconds(updatedAt: Date | string | null, now: Date = ne
 
 export function collectorIsStalled(ageS: number | null): boolean {
   return ageS != null && ageS > COLLECTOR_STALL_AFTER_S;
+}
+
+export type DataStatus = "live" | "stale" | "degraded" | "no_data";
+
+/**
+ * One label for the summary bar and each token.
+ * A stalled collector wins, so a stopped run cannot stay live.
+ * Adapter-down on a priced tier is degraded. LISTED_ONLY stays no_data.
+ */
+export function deriveStatus(input: {
+  collectorAgeS: number | null;
+  adapterDown: boolean;
+  tier: Tier;
+  hasPrint: boolean;
+}): DataStatus {
+  if (collectorIsStalled(input.collectorAgeS)) return "stale";
+  if (input.adapterDown && input.tier !== "LISTED_ONLY") return "degraded";
+  if (input.tier === "LISTED_ONLY" || (!input.hasPrint && !input.adapterDown)) return "no_data";
+  if (input.tier === "DEGRADED") return "degraded";
+  return "live";
+}
+
+/** Subtitle for an oracle price. A stalled collector never prints the feed's own "live". */
+export function oracleFreshnessLabel(input: {
+  dataStatus: DataStatus;
+  oracleState: OracleState;
+  collectorAt: string | null;
+}): string {
+  if (input.dataStatus === "stale") {
+    let time = "an unknown time";
+    if (input.collectorAt) {
+      const ms = Date.parse(input.collectorAt);
+      time = Number.isFinite(ms) ? `${new Date(ms).toISOString().replace("T", " ").slice(0, 16)} UTC` : input.collectorAt;
+    }
+    return `stale · last ${time}`;
+  }
+  if (input.oracleState === "frozen_at_close") return "last close";
+  return input.oracleState.replaceAll("_", " ");
+}
+
+/** Last-good pool prints stay eligible for five minutes. A live read has no as-of. */
+export const POOL_FRESH_MS = 5 * 60 * 1000;
+
+export function updatedWithinPoolWindow(asOf: string | Date | null | undefined, now: Date): boolean {
+  if (asOf == null) return true;
+  const ms = asOf instanceof Date ? asOf.getTime() : Date.parse(asOf);
+  if (!Number.isFinite(ms)) return false;
+  return now.getTime() - ms <= POOL_FRESH_MS;
 }
 
 export function collectorStallCopy(at: string | null): string {
@@ -222,6 +270,11 @@ export function classifyTier(input: TierInput): { tier: Tier; reasons: string[];
   else tier = "DEGRADED";
 
   if (input.decimalsMismatch && tier !== "LISTED_ONLY") tier = "DEGRADED";
+
+  if (input.adapterDown && tier !== "LISTED_ONLY") {
+    if (tier === "FULL" || tier === "ORACLE_ONLY" || tier === "DEX_ONLY") tier = "DEGRADED";
+    reasons.push("DEX_UNAVAILABLE");
+  }
 
   const feedStatus = !input.hasFeed ? "missing" : !input.feedReadable || input.oracle === "stale" ? "stale" : "ok";
   return { tier, reasons: [...new Set(reasons)], feedStatus };

@@ -1,13 +1,16 @@
 import { asTextArray, getDb, num, q } from "../db/client";
 import { DISCLAIMER } from "./disclaimer";
+import { equityReason } from "./copy";
 import {
   ADAPTER_DOWN_NOTE,
   classifyTier,
   collectorIsStalled,
   collectorStallCopy,
+  deriveStatus,
   oracleAgeSeconds,
   oracleState,
   statusWord,
+  type DataStatus,
   type OracleState,
   type SessionName,
   type Tier,
@@ -44,6 +47,9 @@ export type EquitySummary = {
   poolCount: number;
   tvlUsd: number | null;
   notes: string[];
+  dataStatus: DataStatus;
+  reason: string | null;
+  collectorAt: string | null;
 };
 
 type SummaryRow = {
@@ -120,7 +126,7 @@ LEFT JOIN LATERAL (
 WHERE i.delisted_at IS NULL
 `;
 
-function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
+function mapSummary(row: SummaryRow, tick: TickMeta): EquitySummary {
   const now = new Date();
   const session = row.session ?? "closed";
   const halt = Boolean(row.is_trading_halt);
@@ -139,6 +145,7 @@ function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
   });
   const storedReasons = asTextArray(row.reasons);
   const hadAdapterReason = storedReasons.some((reason) => reason.startsWith("ADAPTER_DOWN:"));
+  const adapterDown = tick.uniswapDown || hadAdapterReason;
   const classified = classifyTier({
     inactive: row.status === "ASSET_STATUS_INACTIVE",
     verified: !storedReasons.includes("SYMBOL_MISMATCH"),
@@ -146,7 +153,7 @@ function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
     feedReadable: readable && freshOracle !== "unread",
     oracle: freshOracle,
     eligibleSpot: row.pool_count ?? 0,
-    adapterDown: adapterDown || hadAdapterReason,
+    adapterDown,
     decimalsMismatch: storedReasons.includes("DECIMALS_MISMATCH"),
     multiplierMissing: storedReasons.includes("MULTIPLIER_MISSING"),
     halt,
@@ -161,7 +168,14 @@ function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
   if ((reasons.includes("SYMBOL_MISMATCH") || reasons.includes("MULTIPLIER_MISMATCH")) && tier !== "LISTED_ONLY") {
     tier = "DEGRADED";
   }
-  const notes = adapterDown || hadAdapterReason ? [ADAPTER_DOWN_NOTE] : [];
+  const notes = adapterDown ? [ADAPTER_DOWN_NOTE] : [];
+  const dexPrice = num(row.dex_price);
+  const dataStatus = deriveStatus({
+    collectorAgeS: tick.ageS,
+    adapterDown,
+    tier,
+    hasPrint: oraclePrice != null || dexPrice != null,
+  });
   return {
     id: row.id,
     ticker: row.ticker,
@@ -170,7 +184,7 @@ function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
     address: row.address,
     tier,
     reasons,
-    dexPrice: num(row.dex_price),
+    dexPrice,
     oraclePrice,
     oracleAgeS,
     oracleState: freshOracle,
@@ -192,6 +206,9 @@ function mapSummary(row: SummaryRow, adapterDown: boolean): EquitySummary {
     poolCount: row.pool_count ?? 0,
     tvlUsd: num(row.tvl_usd),
     notes,
+    dataStatus,
+    reason: equityReason(adapterDown, reasons, tier),
+    collectorAt: tick.at,
   };
 }
 
@@ -204,7 +221,7 @@ export async function listEquities(filters: {
   await getDb();
   const tick = await readTickMeta();
   const rows = await q<SummaryRow>(`${SUMMARY_SQL} ORDER BY tvl.tvl_usd DESC NULLS LAST, e.ticker`);
-  return rows.map((row) => mapSummary(row, tick.uniswapDown)).filter((row) => {
+  return rows.map((row) => mapSummary(row, tick)).filter((row) => {
     if (filters.tier && row.tier !== filters.tier) return false;
     if (filters.assetClass && row.assetClass !== filters.assetClass) return false;
     if (filters.hasAlert && !row.alert) return false;
