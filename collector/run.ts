@@ -1,3 +1,4 @@
+import { redact } from "../lib/db/client";
 import { runTick } from "../lib/collector/tick";
 
 const once = process.argv.includes("--once");
@@ -9,7 +10,7 @@ async function loop() {
     try {
       await runTick();
     } catch (error) {
-      console.error(error instanceof Error ? error.stack || error.message : error);
+      console.error(redact(error));
     }
     if (once) return;
     const wait = Math.max(0, PERIOD_MS - (Date.now() - started));

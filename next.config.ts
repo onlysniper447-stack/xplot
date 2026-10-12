@@ -7,7 +7,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
-  serverExternalPackages: ["@electric-sql/pglite"],
+  serverExternalPackages: ["@electric-sql/pglite", "pg"],
+  outputFileTracingIncludes: {
+    "*": ["./db/schema.sql"],
+  },
 };
 
 export default nextConfig;
