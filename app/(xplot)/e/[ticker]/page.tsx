@@ -86,8 +86,8 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
   });
 
   return (
-    <article className="xplot-equity mx-auto w-full space-y-6">
-      <header>
+    <article className="xplot-equity xplot-equity-layout mx-auto w-full">
+      <header className="xplot-area-header">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">{equity.ticker}</h1>
@@ -119,7 +119,7 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         ) : null}
       </header>
 
-      <section className="xplot-panel" aria-label="Prices">
+      <section className="xplot-panel xplot-area-hero" aria-label="Prices">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Price label="DEX price" value={formatUsd(equity.dexPrice)} hint="Per token, spot lane only" />
           <div title="Chainlink price per token, with the age of that print">
@@ -133,18 +133,18 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
         </div>
       </section>
 
-      <section aria-labelledby="chart-heading" className="xplot-panel">
+      <section aria-labelledby="chart-heading" className="xplot-panel xplot-area-chart">
         <h2 id="chart-heading" className="text-sm font-medium">DEX and oracle</h2>
         <div className="mt-3">
           <PriceChart points={series} />
         </div>
       </section>
 
+      <div className="xplot-area-tabs min-w-0">
       <EquityTabs
         panels={{
           overview: (
             <div className="space-y-4">
-              <Freshness seconds={env.ages.collector_s} />
               <p className="text-sm" style={{ color: "var(--muted)" }}>
                 Underlying from the oracle: {formatUsd(equity.underlyingPrice)}. Multiplier {equity.multiplier ?? "—"}. {sessionLabel(equity.session, equity.sessionSource)}
               </p>
@@ -266,7 +266,35 @@ export default async function EquityPage({ params }: { params: Promise<{ ticker:
           ),
         }}
       />
+      </div>
+      <aside className="xplot-panel xplot-area-stats" aria-label="Key stats">
+        <h2 className="text-sm font-medium">Key stats</h2>
+        <dl className="mt-3 space-y-3 text-sm">
+          <Stat label="DEX price" value={formatUsd(equity.dexPrice)} />
+          <div>
+            <dt style={{ color: "var(--muted)" }}>Oracle price</dt>
+            <dd className="mt-1"><OracleCell row={equity} /></dd>
+          </div>
+          <Stat label="Spread" value={formatPct(equity.spreadPct)} />
+          <Stat label="Executable spread" value={formatPct(equity.executableSpread1kPct)} />
+          <Stat label="Liquidity confidence" value={equity.liquidityConfidence ?? "—"} />
+          <Stat label="Session" value={sessionLabel(equity.session, equity.sessionSource)} />
+          <div>
+            <dt style={{ color: "var(--muted)" }}>Last updated</dt>
+            <dd className="mt-1"><Freshness seconds={env.ages.collector_s} /></dd>
+          </div>
+        </dl>
+      </aside>
     </article>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt style={{ color: "var(--muted)" }}>{label}</dt>
+      <dd className="mono mt-1">{value}</dd>
+    </div>
   );
 }
 

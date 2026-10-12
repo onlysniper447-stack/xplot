@@ -235,6 +235,38 @@
   max-width: 1100px;
 }
 
+.xplot-equity-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+@media (min-width: 1024px) {
+  .xplot-equity-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-areas:
+      "header header"
+      "hero hero"
+      "chart stats"
+      "tabs stats";
+    column-gap: 24px;
+    row-gap: 24px;
+  }
+
+  .xplot-area-header { grid-area: header; }
+  .xplot-area-hero { grid-area: hero; }
+  .xplot-area-chart { grid-area: chart; }
+  .xplot-area-tabs { grid-area: tabs; }
+
+  .xplot-area-stats {
+    grid-area: stats;
+    position: sticky;
+    top: 13rem;
+    align-self: start;
+  }
+}
+
 .xplot-panel {
   background: var(--color-panel);
   color: var(--text);
